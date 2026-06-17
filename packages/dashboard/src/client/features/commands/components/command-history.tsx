@@ -1,0 +1,667 @@
+import { useMemo, useState } from 'react'
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronDown,
+  ChevronRight,
+  History,
+  RotateCcw,
+  Search,
+  Terminal,
+  X,
+} from 'lucide-react'
+import { cn } from '../../../lib/utils'
+import { formatDateTime, formatDuration } from '../../../lib/date-utils'
+import { parseUtcDate } from '../../../lib/utils'
+import {
+  useCommandEvents,
+  useCommandHistory,
+  type CommandHistoryEntry,
+} from '../hooks/use-commands'
+import { TerminalHandoffPanel } from '../../sessions/components/terminal-handoff-panel'
+import { EventStreamRenderer } from './event-stream/event-stream-renderer'
+
+// ── Types ──
+
+type StatusFilter =
+  | 'all'
+  | 'success'
+  | 'fail'
+  | 'cancelled'
+  | 'incomplete'
+  | 'running'
+  | 'stalled'
+  | 'orphaned'
+type SortField = 'date' | 'command' | 'duration' | 'status'
+type SortDir = 'asc' | 'desc'
+
+/**
+ * Heartbeat threshold past which a still-running row is considered stalled.
+ * Mirrors the server-side default — kept in sync manually since the dashboard
+ * doesn't currently surface the configured value to the client.
+ */
+const HEARTBEAT_STALE_MS = 60_000
+
+/**
+ * Process-exit sentinels (canonical definitions live in the CLI's
+ * `exit-codes` module). The client bundle mirrors the numeric values rather
+ * than importing the Node module. These are retained only for the legacy
+ * fallback in `getStatus` (rows that predate the server-derived `outcome` /
+ * `cancellation_reason` fields). The cascade-vs-user-cancel distinction is
+ * now read from the typed `entry.cancellation_reason` field instead of
+ * matching a magic exit-code number.
+ */
+const CANCEL_EXIT_CODE = -2
+const ORPHAN_EXIT_CODE = -3
+
+// ── Fuzzy match helper ──
+
+/**
+ * Simple fuzzy match: every character of the query must appear in order
+ * within the target string (case-insensitive). Returns true if matched.
+ */
+function fuzzyMatch(target: string, query: string): boolean {
+  const lower = target.toLowerCase()
+  const q = query.toLowerCase()
+  let ti = 0
+  for (let qi = 0; qi < q.length; qi++) {
+    const idx = lower.indexOf(q[qi]!, ti)
+    if (idx < 0) return false
+    ti = idx + 1
+  }
+  return true
+}
+
+// ── Status helpers ──
+
+function getStatus(entry: CommandHistoryEntry): StatusFilter {
+  if (entry.exit_code === null) {
+    // Still in flight — check heartbeat freshness for stalled state.
+    if (entry.last_heartbeat_at) {
+      const age = Date.now() - parseUtcDate(entry.last_heartbeat_at).getTime()
+      if (age > HEARTBEAT_STALE_MS) return 'stalled'
+    }
+    return 'running'
+  }
+  // Prefer the server-derived outcome when present — it accounts for
+  // the workflow's actual lifecycle, not just process exit code.
+  if (entry.outcome === 'success') return 'success'
+  if (entry.outcome === 'incomplete') return 'incomplete'
+  if (entry.outcome === 'cancelled') return 'cancelled'
+  if (entry.outcome === 'failed') return 'fail'
+  // Legacy fallback for rows that predate the outcome field.
+  if (entry.exit_code === 0) return 'success'
+  if (entry.exit_code === CANCEL_EXIT_CODE) return 'cancelled'
+  if (entry.cancellation_reason === 'cascade') return 'cancelled'
+  if (entry.exit_code === ORPHAN_EXIT_CODE) return 'orphaned'
+  return 'fail'
+}
+
+function statusLabel(s: StatusFilter): string {
+  switch (s) {
+    case 'success': return 'Success'
+    case 'fail': return 'Fail'
+    case 'cancelled': return 'Cancelled'
+    case 'incomplete': return 'Incomplete'
+    case 'running': return 'Running'
+    case 'stalled': return 'Stalled'
+    case 'orphaned': return 'Orphaned'
+    default: return 'All'
+  }
+}
+
+/**
+ * The pill label, distinguishing a cascade-close (`-4`, "Superseded") from a
+ * user cancel (`-2`, "Cancelled") — both share the amber `cancelled` filter
+ * bucket but read differently so an operator knows which happened.
+ */
+function pillLabel(entry: CommandHistoryEntry, status: StatusFilter): string {
+  if (status === 'cancelled' && entry.cancellation_reason === 'cascade') {
+    return 'Superseded'
+  }
+  return statusLabel(status)
+}
+
+/** Tooltip elaborating a non-obvious pill (e.g. why a row is "Superseded"). */
+function pillTitle(entry: CommandHistoryEntry, status: StatusFilter): string | undefined {
+  if (status === 'cancelled' && entry.cancellation_reason === 'cascade') {
+    return 'Stopped because its parent workflow was closed'
+  }
+  return undefined
+}
+
+/** Tailwind classes for the per-status pill in the row. */
+function statusPillClasses(status: StatusFilter): string {
+  switch (status) {
+    case 'success':
+      return 'border-emerald-500/25 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+    case 'cancelled':
+      return 'border-amber-500/25 bg-amber-500/15 text-amber-700 dark:text-amber-400'
+    case 'incomplete':
+      // Same amber family as cancelled/stalled — both are "needs attention,
+      // not a hard failure". Resume-in-terminal is the natural follow-up.
+      return 'border-amber-500/25 bg-amber-500/15 text-amber-700 dark:text-amber-400'
+    case 'stalled':
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+    case 'orphaned':
+      return 'border-zinc-300 bg-zinc-100/50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800/30 dark:text-zinc-400'
+    case 'fail':
+      return 'border-red-500/25 bg-red-500/15 text-red-700 dark:text-red-400'
+    case 'running':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+    default:
+      return 'border-zinc-500/25 bg-zinc-500/15 text-zinc-600 dark:text-zinc-400'
+  }
+}
+
+// ── Sort comparator ──
+
+function compareEntries(a: CommandHistoryEntry, b: CommandHistoryEntry, field: SortField, dir: SortDir): number {
+  let cmp = 0
+  switch (field) {
+    case 'date':
+      cmp = new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
+      break
+    case 'command':
+      cmp = a.command.localeCompare(b.command)
+      break
+    case 'duration':
+      cmp = (a.duration_ms ?? -1) - (b.duration_ms ?? -1)
+      break
+    case 'status': {
+      const order: Record<StatusFilter, number> = {
+        running: 0,
+        stalled: 1,
+        incomplete: 2,
+        orphaned: 3,
+        success: 4,
+        cancelled: 5,
+        fail: 6,
+        all: -1,
+      }
+      cmp = (order[getStatus(a)] ?? 0) - (order[getStatus(b)] ?? 0)
+      break
+    }
+  }
+  return dir === 'asc' ? cmp : -cmp
+}
+
+// ── Status filter chips ──
+
+const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'running', label: 'Running' },
+  { value: 'stalled', label: 'Stalled' },
+  { value: 'orphaned', label: 'Orphaned' },
+  { value: 'success', label: 'Success' },
+  { value: 'incomplete', label: 'Incomplete' },
+  { value: 'fail', label: 'Fail' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
+
+// ── Sub-components ──
+
+function SortButton({
+  label,
+  field,
+  activeField,
+  dir,
+  onToggle,
+}: {
+  label: string
+  field: SortField
+  activeField: SortField
+  dir: SortDir
+  onToggle: (field: SortField) => void
+}) {
+  const isActive = field === activeField
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(field)}
+      className={cn(
+        'inline-flex items-center gap-1 text-xs transition-colors',
+        isActive
+          ? 'font-medium text-zinc-900 dark:text-zinc-100'
+          : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300',
+      )}
+    >
+      {label}
+      {isActive ? (
+        dir === 'desc' ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />
+      ) : (
+        <ArrowUpDown className="h-3 w-3 opacity-40" />
+      )}
+    </button>
+  )
+}
+
+/** Commands that can be meaningfully re-run from the command center. */
+const RERUNNABLE_COMMANDS = new Set(['map', 'review'])
+
+function isRerunnable(command: string): boolean {
+  const base = command.replace(/^ocr\s+/, '').split(/\s+/)[0] ?? ''
+  return RERUNNABLE_COMMANDS.has(base)
+}
+
+/**
+ * History entry ids are the `command_executions.id` integer surfaced as a
+ * string by the API. Returns null for malformed ids.
+ */
+function parseExecutionId(id: string): number | null {
+  const n = parseInt(id, 10)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * Tiny pill button for the Raw / Timeline view toggle inside an expanded
+ * history row. Two states (active/inactive); active gets the dark fill.
+ */
+function ViewToggleButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'rounded px-2 py-0.5 text-[11px] font-medium transition',
+        active
+          ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+          : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function HistoryItem({
+  entry,
+  isRunning,
+  onRerun,
+  onHandoff,
+}: {
+  entry: CommandHistoryEntry
+  isRunning: boolean
+  onRerun: (command: string) => void
+  onHandoff: (entry: CommandHistoryEntry) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [showTimeline, setShowTimeline] = useState(false)
+  const status = getStatus(entry)
+  const isComplete = entry.exit_code !== null
+  const canRerun = isComplete && isRerunnable(entry.command)
+  // "Pick up in terminal" surfaces only when there's actually a vendor session
+  // token bound to this row — otherwise there's nothing to resume.
+  const canHandoff = !!entry.workflow_id && !!entry.vendor_session_id
+  // Timeline only meaningful for AI commands (those carrying a vendor) and
+  // only fetched when the user opts in by toggling. The hook is gated by
+  // `enabled` so we don't pay the JSONL parse for every row scrolled past.
+  const executionId = parseExecutionId(entry.id)
+  const canShowTimeline = !!entry.vendor && expanded
+  const eventsQuery = useCommandEvents(
+    executionId,
+    canShowTimeline && showTimeline,
+  )
+
+  return (
+    <div className="border-b border-zinc-200 last:border-b-0 dark:border-zinc-800">
+      <div className="flex w-full items-center gap-3 px-4 py-3 min-w-0">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left transition-colors hover:text-zinc-900 dark:hover:text-zinc-100"
+        >
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-zinc-400" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400" />
+          )}
+          <span className="min-w-0 flex-1 truncate font-mono text-sm">{entry.command}</span>
+        </button>
+        <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{formatDateTime(entry.started_at)}</span>
+        <span className="shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+          {formatDuration(entry.duration_ms)}
+        </span>
+        <span
+          title={pillTitle(entry, status)}
+          className={cn(
+            'inline-flex shrink-0 items-center rounded-md border px-2 py-0.5 text-xs font-medium',
+            statusPillClasses(status),
+          )}
+        >
+          {pillLabel(entry, status)}
+        </span>
+        {canHandoff && (
+          <button
+            type="button"
+            onClick={() => onHandoff(entry)}
+            title="Pick up in terminal"
+            aria-label="Pick up in terminal"
+            className={cn(
+              'shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors',
+              'hover:bg-zinc-100 hover:text-zinc-700',
+              'dark:hover:bg-zinc-800 dark:hover:text-zinc-200',
+            )}
+          >
+            <Terminal className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {canRerun && (
+          <button
+            type="button"
+            disabled={isRunning}
+            onClick={() => onRerun(entry.command)}
+            title="Re-run this command"
+            className={cn(
+              'shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors',
+              'hover:bg-indigo-50 hover:text-indigo-600',
+              'dark:hover:bg-indigo-500/10 dark:hover:text-indigo-400',
+              isRunning && 'cursor-not-allowed opacity-30',
+            )}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <div>
+          {(entry.vendor || entry.resolved_model) && (
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-b border-zinc-100 bg-zinc-50 px-4 py-2 text-[11px] dark:border-zinc-800 dark:bg-zinc-900/50">
+              {entry.vendor && (
+                <>
+                  <dt className="text-zinc-500 dark:text-zinc-500">Vendor</dt>
+                  <dd className="font-mono text-zinc-700 dark:text-zinc-300">{entry.vendor}</dd>
+                </>
+              )}
+              {entry.resolved_model && (
+                <>
+                  <dt className="text-zinc-500 dark:text-zinc-500">Model</dt>
+                  <dd className="font-mono text-zinc-700 dark:text-zinc-300">{entry.resolved_model}</dd>
+                </>
+              )}
+              {entry.workflow_id && (
+                <>
+                  <dt className="text-zinc-500 dark:text-zinc-500">Workflow</dt>
+                  <dd className="font-mono text-zinc-700 dark:text-zinc-300">{entry.workflow_id}</dd>
+                </>
+              )}
+            </dl>
+          )}
+
+          {canHandoff && (
+            <div className="border-b border-zinc-100 bg-zinc-50/50 px-4 py-2 dark:border-zinc-800 dark:bg-zinc-900/30">
+              <button
+                type="button"
+                onClick={() => onHandoff(entry)}
+                title="Copy a resume command to continue this AI session in your terminal"
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              >
+                <Terminal className="h-3.5 w-3.5" />
+                Resume in terminal
+              </button>
+            </div>
+          )}
+
+          {canShowTimeline && (
+            <div className="flex items-center gap-2 border-b border-zinc-100 bg-zinc-50/50 px-4 py-2 dark:border-zinc-800 dark:bg-zinc-900/30">
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-500">View:</span>
+              <ViewToggleButton
+                active={!showTimeline}
+                onClick={() => setShowTimeline(false)}
+              >
+                Raw output
+              </ViewToggleButton>
+              <ViewToggleButton
+                active={showTimeline}
+                onClick={() => setShowTimeline(true)}
+              >
+                Timeline
+              </ViewToggleButton>
+              {showTimeline && eventsQuery.isLoading && (
+                <span className="ml-auto text-[11px] text-zinc-500 dark:text-zinc-500">
+                  Loading…
+                </span>
+              )}
+              {showTimeline &&
+                !eventsQuery.isLoading &&
+                eventsQuery.data?.length === 0 && (
+                  <span className="ml-auto text-[11px] text-zinc-500 dark:text-zinc-500">
+                    No timeline data captured for this run.
+                  </span>
+                )}
+            </div>
+          )}
+
+          {canShowTimeline && showTimeline ? (
+            eventsQuery.data && eventsQuery.data.length > 0 ? (
+              <div className="flex max-h-[400px] flex-col bg-white dark:bg-zinc-950">
+                <EventStreamRenderer
+                  events={eventsQuery.data}
+                  isRunning={false}
+                  className="min-h-0 flex-1"
+                />
+              </div>
+            ) : (
+              // Empty timeline → fall through to the legacy raw view so the
+              // user always sees something useful.
+              <pre className="max-h-[300px] overflow-y-auto bg-zinc-950 px-4 py-3 font-mono text-sm leading-relaxed text-zinc-300">
+                {entry.output || 'No output recorded.'}
+              </pre>
+            )
+          ) : (
+            <pre className="max-h-[300px] overflow-y-auto bg-zinc-950 px-4 py-3 font-mono text-sm leading-relaxed text-zinc-300">
+              {entry.output || 'No output recorded.'}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main component ──
+
+type CommandHistoryProps = {
+  isRunning: boolean
+  onRerun: (command: string) => void
+}
+
+export function CommandHistory({ isRunning, onRerun }: CommandHistoryProps) {
+  const { data: history, isLoading } = useCommandHistory()
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [sortField, setSortField] = useState<SortField>('date')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [handoffWorkflowId, setHandoffWorkflowId] = useState<string | null>(null)
+
+  const toggleSort = (field: SortField) => {
+    if (field === sortField) {
+      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))
+    } else {
+      setSortField(field)
+      setSortDir(field === 'date' ? 'desc' : 'asc')
+    }
+  }
+
+  const filtered = useMemo(() => {
+    if (!history) return []
+    let items = history
+
+    // Status filter
+    if (statusFilter !== 'all') {
+      items = items.filter((e) => getStatus(e) === statusFilter)
+    }
+
+    // Fuzzy search across command + args
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim()
+      items = items.filter((e) => {
+        const haystack = e.command + (e.args ? ' ' + e.args : '')
+        return fuzzyMatch(haystack, q)
+      })
+    }
+
+    // Sort
+    return [...items].sort((a, b) => compareEntries(a, b, sortField, sortDir))
+  }, [history, statusFilter, searchQuery, sortField, sortDir])
+
+  // Count by status for the chip badges
+  const statusCounts = useMemo(() => {
+    if (!history) return {} as Record<StatusFilter, number>
+    const counts: Record<string, number> = {
+      all: history.length,
+      success: 0,
+      fail: 0,
+      cancelled: 0,
+      incomplete: 0,
+      running: 0,
+      stalled: 0,
+      orphaned: 0,
+    }
+    for (const e of history) counts[getStatus(e)]!++
+    return counts as Record<StatusFilter, number>
+  }, [history])
+
+  if (isLoading) {
+    return (
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <div className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <History className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />
+          <span className="text-sm font-medium">Command History</span>
+        </div>
+        <div className="p-4 text-center text-sm text-zinc-500 dark:text-zinc-400">Loading...</div>
+      </div>
+    )
+  }
+
+  const hasHistory = history && history.length > 0
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+      {/* Header */}
+      <div className="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+        <History className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />
+        <span className="text-sm font-medium">Command History</span>
+        {hasHistory && (
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">
+            {filtered.length === history.length
+              ? `${history.length}`
+              : `${filtered.length} / ${history.length}`}
+          </span>
+        )}
+      </div>
+
+      {/* Toolbar — search, status filter, sort */}
+      {hasHistory && (
+        <div className="space-y-2 border-b border-zinc-200 bg-zinc-50/50 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+          {/* Search bar */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search commands..."
+              className="w-full rounded-md border border-zinc-200 bg-white py-1.5 pl-8 pr-8 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Status chips + sort controls */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Status filter chips */}
+            <div className="flex flex-wrap items-center gap-1">
+              {STATUS_OPTIONS.map((opt) => {
+                const count = statusCounts[opt.value] ?? 0
+                if (opt.value !== 'all' && count === 0) return null
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setStatusFilter(opt.value)}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                      statusFilter === opt.value
+                        ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                        : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700',
+                    )}
+                  >
+                    {opt.label}
+                    <span className={cn(
+                      'tabular-nums',
+                      statusFilter === opt.value
+                        ? 'text-zinc-300 dark:text-zinc-400'
+                        : 'text-zinc-400 dark:text-zinc-500',
+                    )}>
+                      {count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Sort controls */}
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Sort</span>
+              <SortButton label="Date" field="date" activeField={sortField} dir={sortDir} onToggle={toggleSort} />
+              <SortButton label="Command" field="command" activeField={sortField} dir={sortDir} onToggle={toggleSort} />
+              <SortButton label="Duration" field="duration" activeField={sortField} dir={sortDir} onToggle={toggleSort} />
+              <SortButton label="Status" field="status" activeField={sortField} dir={sortDir} onToggle={toggleSort} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Results */}
+      {!hasHistory ? (
+        <div className="p-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
+          No commands have been run yet.
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="p-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
+          No commands match your filters.
+        </div>
+      ) : (
+        filtered.map((entry) => (
+          <HistoryItem
+            key={entry.id}
+            entry={entry}
+            isRunning={isRunning}
+            onRerun={onRerun}
+            onHandoff={(e) => {
+              if (e.workflow_id) setHandoffWorkflowId(e.workflow_id)
+            }}
+          />
+        ))
+      )}
+
+      {/* Terminal handoff modal — opens when "Pick up in terminal" is clicked
+          on a row with a captured vendor session id. */}
+      {handoffWorkflowId && (
+        <TerminalHandoffPanel
+          workflowId={handoffWorkflowId}
+          onClose={() => setHandoffWorkflowId(null)}
+        />
+      )}
+    </div>
+  )
+}

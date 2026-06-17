@@ -1,0 +1,94 @@
+name: Cross-Platform Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "Target OS"
+        type: choice
+        options:
+          - windows-latest
+          - macos-latest
+          - ubuntu-latest
+        default: windows-latest
+      targets:
+        # e2e-only exists so a branch can validate its e2e suites on an OS
+        # whose unit tests fail for unrelated, pre-existing reasons (e.g.
+        # the Windows unit-test breakage tracked separately) without the
+        # unit step masking the e2e signal.
+        description: "Which targets to run"
+        type: choice
+        options:
+          - all
+          - e2e-only
+          # unit-direct bypasses nx and runs vitest per package with output
+          # straight to the job log — nx drops failed-task vitest stdout on
+          # Windows even with --output-style=stream, which made the Windows
+          # unit failures (issue #41) undiagnosable through the normal path.
+          - unit-direct
+        default: all
+      debug:
+        description: "Open SSH debug session after tests"
+        type: boolean
+        default: false
+
+env:
+  # GitHub requires this to opt into the Node 24 runtime for JavaScript actions.
+  # Without it, actions fall back to Node 20 which may emit deprecation warnings.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    name: Test on ${{ inputs.os }}
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - name: Unit tests
+        if: ${{ inputs.targets == 'all' }}
+        # --output-style=stream so a failing task's vitest output is not
+        # swallowed by nx's grouped terminal output (it was, on Windows).
+        run: pnpm nx run-many -t test --output-style=stream
+      - name: Unit tests (direct vitest, no nx)
+        if: ${{ inputs.targets == 'unit-direct' }}
+        shell: bash
+        # Continue past each failure so one run surfaces ALL three packages'
+        # failing assertions. Builds run first via nx (the dashboard suite
+        # imports built deps); only the vitest invocations bypass nx.
+        run: |
+          set -uo pipefail
+          pnpm nx run-many -t build --projects=platform,cli,dashboard
+          rc=0
+          for dir in packages/shared/platform packages/cli packages/dashboard; do
+            echo "===== vitest: $dir ====="
+            (cd "$dir" && pnpm exec vitest run --reporter=verbose) || rc=1
+          done
+          exit $rc
+      - name: cli-e2e
+        if: ${{ inputs.targets != 'unit-direct' }}
+        run: pnpm nx e2e cli-e2e
+      - name: dashboard-api-e2e
+        if: ${{ inputs.targets != 'unit-direct' }}
+        run: pnpm nx e2e dashboard-api-e2e
+
+      - name: Install Playwright (Linux only)
+        if: ${{ inputs.os == 'ubuntu-latest' }}
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: UI E2E (Linux only)
+        if: ${{ inputs.os == 'ubuntu-latest' }}
+        run: pnpm nx e2e dashboard-ui-e2e
+
+      - name: Debug Session (SSH)
+        if: ${{ inputs.debug }}
+        timeout-minutes: 15
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true

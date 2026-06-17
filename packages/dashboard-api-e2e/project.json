@@ -1,0 +1,24 @@
+{
+  "name": "dashboard-api-e2e",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/dashboard-api-e2e/src",
+  "projectType": "application",
+  "tags": ["scope:dashboard", "type:e2e", "test:api"],
+  "targets": {
+    "e2e": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["typecheck", "cli:build"],
+      "options": {
+        "command": "vitest run --config packages/dashboard-api-e2e/vitest.config.ts",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p tsconfig.typecheck.json",
+        "cwd": "{projectRoot}"
+      }
+    }
+  }
+}

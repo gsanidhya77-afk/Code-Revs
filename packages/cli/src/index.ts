@@ -1,0 +1,68 @@
+// MUST be first: guards Node >= 22.5 (node:sqlite) + suppresses its
+// experimental warning, before any module that touches the engine loads.
+import "./lib/runtime-guard.js";
+import { Command } from "commander";
+import { initCommand } from "./commands/init";
+import { progressCommand } from "./commands/progress";
+import { stateCommand } from "./commands/state";
+import { sessionCommand } from "./commands/session";
+import { modelsCommand } from "./commands/models";
+import { teamCommand } from "./commands/team";
+import { reviewCommand } from "./commands/review";
+import { updateCommand } from "./commands/update";
+import { dashboardCommand } from "./commands/dashboard";
+import { doctorCommand } from "./commands/doctor";
+import { dbCommand } from "./commands/db";
+import { reviewersCommand } from "./commands/reviewers";
+import { hostCommand } from "./commands/host";
+import { checkForUpdate, printUpdateNotification } from "./lib/update-check.js";
+import { checkLocalArtifactVersion, printLocalVersionHint } from "./lib/cli-config.js";
+import { CLI_VERSION } from "./lib/version.js";
+
+// Only check for updates on human-facing commands (not AI-invoked ones like `state`)
+const HUMAN_COMMANDS = new Set(["init", "update", "doctor", "dashboard", "progress"]);
+const subcommand = process.argv[2];
+const updateCheck = subcommand && HUMAN_COMMANDS.has(subcommand)
+  ? checkForUpdate(CLI_VERSION)
+  : null;
+
+const program = new Command();
+
+program
+  .name("ocr")
+  .description("Open Code Review - AI-powered multi-agent code review")
+  .version(CLI_VERSION);
+
+program.addCommand(initCommand);
+program.addCommand(progressCommand);
+program.addCommand(stateCommand);
+program.addCommand(sessionCommand);
+program.addCommand(modelsCommand);
+program.addCommand(teamCommand);
+program.addCommand(reviewCommand);
+program.addCommand(updateCommand);
+program.addCommand(dashboardCommand);
+program.addCommand(doctorCommand);
+program.addCommand(dbCommand);
+program.addCommand(reviewersCommand);
+program.addCommand(hostCommand);
+
+await program.parseAsync();
+
+// Check for local artifact version drift (fast, no network)
+if (subcommand && HUMAN_COMMANDS.has(subcommand)) {
+  const drift = checkLocalArtifactVersion(process.cwd(), CLI_VERSION);
+  if (drift) {
+    printLocalVersionHint(drift);
+  }
+}
+
+if (updateCheck) {
+  const updateResult = await Promise.race([
+    updateCheck,
+    new Promise<null>((r) => setTimeout(() => r(null), 500)),
+  ]);
+  if (updateResult?.updateAvailable) {
+    printUpdateNotification(updateResult);
+  }
+}

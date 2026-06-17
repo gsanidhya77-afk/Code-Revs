@@ -1,0 +1,51 @@
+{
+  "name": "open-code-review",
+  "version": "1.10.4",
+  "private": true,
+  "description": "Open Code Review - AI-powered multi-agent code review",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spencermarx/open-code-review"
+  },
+  "license": "Apache-2.0",
+  "author": "Spencer Marx",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "nx run-many -t build",
+    "build:cli": "nx build cli",
+    "test": "nx run-many -t test",
+    "test:cli": "nx test cli",
+    "lint": "nx run-many -t lint",
+    "lint:cli": "nx lint cli",
+    "e2e": "nx run-many -t e2e",
+    "e2e:cli": "nx e2e cli-e2e",
+    "e2e:dashboard-api": "nx e2e dashboard-api-e2e",
+    "e2e:dashboard-ui": "nx e2e dashboard-ui-e2e"
+  },
+  "devDependencies": {
+    "@nx/devkit": "^22.0.0",
+    "@nx/esbuild": "^22.0.0",
+    "@nx/eslint": "^22.0.0",
+    "@nx/eslint-plugin": "^22.0.0",
+    "@nx/js": "^22.0.0",
+    "@nx/playwright": "^22.6.4",
+    "@nx/vitest": "^22.6.4",
+    "@playwright/test": "^1.59.1",
+    "@swc-node/register": "^1.11.1",
+    "@swc/core": "^1.15.18",
+    "@types/node": "^22.10.5",
+    "@typescript-eslint/eslint-plugin": "^8",
+    "@typescript-eslint/parser": "^8",
+    "@vitest/coverage-v8": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "eslint": "^9",
+    "eslint-plugin-react-hooks": "^5",
+    "nx": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}

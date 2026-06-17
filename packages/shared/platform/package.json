@@ -1,0 +1,30 @@
+{
+  "name": "@open-code-review/platform",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cross-platform utilities for Open Code Review (internal, non-buildable)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./verdict": {
+      "types": "./src/verdict.ts",
+      "source": "./src/verdict.ts",
+      "default": "./src/verdict.ts"
+    },
+    "./counts": {
+      "types": "./src/counts.ts",
+      "source": "./src/counts.ts",
+      "default": "./src/counts.ts"
+    }
+  },
+  "dependencies": {
+    "cross-spawn": "^7.0.6"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "^6.0.6"
+  }
+}
