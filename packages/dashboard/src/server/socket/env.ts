@@ -21,6 +21,21 @@ const ENV_ALLOWLIST = [
   'SHELL',
   'USER',
   'TMPDIR',
+  // Windows-specific — Claude Code reads config/auth from APPDATA, writes
+  // temp files to TEMP/TMP, and resolves binaries via PATHEXT. Without
+  // these the spawned process can't find its keychain, config dir, or tools.
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'TEMP',
+  'TMP',
+  'USERNAME',
+  'COMPUTERNAME',
+  'SystemRoot',
+  'SYSTEMROOT',
+  'WINDIR',
+  'PATHEXT',
+  'ProgramFiles',
 ] as const
 
 /**

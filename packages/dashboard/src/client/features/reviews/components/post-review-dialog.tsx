@@ -89,10 +89,14 @@ export function PostReviewDialog({
     cancelGeneration,
     saveDraft,
     submitToGitHub,
+    applyManualPrUrl,
+    savePrUrl,
     reset,
     setStep,
   } = usePostReview();
   const [activityExpanded, setActivityExpanded] = useState(true);
+  const [manualUrl, setManualUrl] = useState('');
+  const [manualUrlError, setManualUrlError] = useState('');
   const hasAutoCollapsed = useRef(false);
   const [draftSaved, setDraftSaved] = useState(false);
 
@@ -100,6 +104,8 @@ export function PostReviewDialog({
     setOpen(false);
     setEditMode(false);
     setEditContent("");
+    setManualUrl('');
+    setManualUrlError('');
     reset();
   }, [reset]);
 
@@ -228,7 +234,7 @@ export function PostReviewDialog({
                   <div className="grid gap-3 sm:grid-cols-2">
                     {/* Post team review directly */}
                     <button
-                      onClick={() => submitToGitHub(prNumber, finalContent)}
+                      onClick={() => submitToGitHub(prNumber, finalContent, checkResult?.prUrl)}
                       className="group rounded-lg border border-zinc-200 p-4 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/50 dark:border-zinc-700 dark:hover:border-blue-700 dark:hover:bg-blue-950/20"
                     >
                       <div className="mb-2 flex items-center gap-2">
@@ -454,6 +460,40 @@ export function PostReviewDialog({
                 </div>
               )}
 
+              {/* URL input step — authenticated but no PR found; prompt cleanly without error UI */}
+              {step === "url-input" && (
+                <div className="space-y-4 py-4">
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                      Enter the GitHub PR URL
+                    </p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Paste the full PR URL — this will be saved so you won't need to enter it again.
+                    </p>
+                  </div>
+                  <input
+                    type="url"
+                    value={manualUrl}
+                    onChange={e => { setManualUrl(e.target.value); setManualUrlError(''); }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && manualUrl.trim()) {
+                        if (applyManualPrUrl(manualUrl)) {
+                          savePrUrl(sessionId, manualUrl.trim());
+                        } else {
+                          setManualUrlError('Enter a valid GitHub PR URL: https://github.com/owner/repo/pull/123');
+                        }
+                      }
+                    }}
+                    placeholder="https://github.com/owner/repo/pull/123"
+                    autoFocus
+                    className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder-zinc-500"
+                  />
+                  {manualUrlError && (
+                    <p className="text-xs text-red-600 dark:text-red-400">{manualUrlError}</p>
+                  )}
+                </div>
+              )}
+
               {/* Error step */}
               {step === "error" && (
                 <div className="space-y-4 py-4">
@@ -513,12 +553,38 @@ export function PostReviewDialog({
                     onClick={() => {
                       const content = getPostContent();
                       saveDraft(sessionId, roundNumber, content);
-                      submitToGitHub(prNumber, content);
+                      submitToGitHub(prNumber, content, checkResult?.prUrl);
                     }}
                     className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
                   >
                     <Send className="h-3.5 w-3.5" />
                     Post to GitHub
+                  </button>
+                </>
+              )}
+
+              {/* URL input footer */}
+              {step === "url-input" && (
+                <>
+                  <button
+                    onClick={() => {
+                      if (applyManualPrUrl(manualUrl)) {
+                        savePrUrl(sessionId, manualUrl.trim());
+                      } else {
+                        setManualUrlError('Enter a valid GitHub PR URL: https://github.com/owner/repo/pull/123');
+                      }
+                    }}
+                    disabled={!manualUrl.trim()}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Continue
+                  </button>
+                  <button
+                    onClick={close}
+                    className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  >
+                    Close
                   </button>
                 </>
               )}

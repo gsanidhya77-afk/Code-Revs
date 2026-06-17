@@ -132,7 +132,33 @@ export function registerPostHandlers(
         return
       }
 
-      // Find PR for branch (tries slash-restored variants if needed)
+      // Resolve session directory to check for remote-pr.json metadata.
+      const sessionDir = session.session_dir
+        ? resolveSessionDir(session.session_dir, ocrDir)
+        : join(ocrDir, 'sessions', sessionId)
+
+      const remoteMeta = (() => {
+        const metaPath = join(sessionDir, 'remote-pr.json')
+        if (!existsSync(metaPath)) return null
+        try {
+          return JSON.parse(readFileSync(metaPath, 'utf-8')) as {
+            prUrl: string; owner: string; repo: string; prNumber: number
+          }
+        } catch { return null }
+      })()
+
+      if (remoteMeta) {
+        // Remote PR: we already have the URL and number — no local branch lookup needed.
+        socket.emit('post:gh-result', {
+          authenticated: true,
+          prNumber: remoteMeta.prNumber,
+          prUrl: remoteMeta.prUrl,
+          branch,
+        })
+        return
+      }
+
+      // Local PR: find by branch (tries slash-restored variants if needed)
       const pr = await findPrForBranch(branch, cleanEnv(), repoRoot)
       if (pr) {
         socket.emit('post:gh-result', {
@@ -159,6 +185,32 @@ export function registerPostHandlers(
         branch: null,
         error: 'Internal error',
       })
+    }
+  })
+
+  // ── Save PR URL to session (persists so next post:check-gh finds it automatically) ──
+  socket.on('post:save-pr-url', (payload: { sessionId: string; prUrl: string }) => {
+    try {
+      const { sessionId, prUrl } = payload ?? {}
+      if (typeof sessionId !== 'string' || typeof prUrl !== 'string') return
+
+      const m = prUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/)
+      if (!m) return
+
+      const session = getSession(db, sessionId)
+      if (!session) return
+
+      const sessionDir = session.session_dir
+        ? resolveSessionDir(session.session_dir, ocrDir)
+        : join(ocrDir, 'sessions', sessionId)
+
+      writeFileSync(
+        join(sessionDir, 'remote-pr.json'),
+        JSON.stringify({ prUrl, owner: m[1], repo: m[2], prNumber: parseInt(m[3], 10) }),
+        'utf-8',
+      )
+    } catch (err) {
+      console.error('Error in post:save-pr-url handler:', err)
     }
   })
 
@@ -475,21 +527,26 @@ export function registerPostHandlers(
   // ── Submit review to GitHub ──
   socket.on(
     'post:submit',
-    async (payload: { prNumber: number; content: string }) => {
+    async (payload: { prNumber: number; content: string; prUrl?: string | null }) => {
       try {
-        const { prNumber, content } = payload ?? {}
+        const { prNumber, content, prUrl } = payload ?? {}
         if (typeof prNumber !== 'number' || typeof content !== 'string') {
           socket.emit('post:submit-result', { success: false, error: 'Invalid payload' })
           return
         }
 
+        // Use the PR URL as the target when available (works for any public repo).
+        // Fall back to prNumber-only (local-repo) when no URL is supplied.
+        const target = prUrl ? prUrl : String(prNumber)
+        const label = prUrl ? prUrl : `PR #${prNumber}`
+
         // Track in command_executions
         const tracker = startTrackedExecution(
           io, db, ocrDir,
           'ocr post-to-github',
-          [`PR #${prNumber}`],
+          [label],
         )
-        tracker.appendOutput(`▸ Posting review to PR #${prNumber}...\n`)
+        tracker.appendOutput(`▸ Posting review to ${label}...\n`)
 
         // Write content to temp file for --body-file
         const tmpDir = join(tmpdir(), 'ocr-post-comments')
@@ -501,14 +558,14 @@ export function registerPostHandlers(
         try {
           const { stdout } = await execBinaryAsync(
             'gh',
-            ['pr', 'comment', String(prNumber), '--body-file', tmpFile],
+            ['pr', 'comment', target, '--body-file', tmpFile],
             { env: cleanEnv(), cwd: repoRoot, encoding: 'utf-8' },
           )
 
           // Try to extract the comment URL from gh output
           const urlMatch = stdout.match(/(https:\/\/github\.com\S+)/)?.[0] ?? null
 
-          tracker.appendOutput(`✓ Posted to PR #${prNumber}${urlMatch ? ` — ${urlMatch}` : ''}\n`)
+          tracker.appendOutput(`✓ Posted to ${label}${urlMatch ? ` — ${urlMatch}` : ''}\n`)
           tracker.finish(0)
           socket.emit('post:submit-result', { success: true, commentUrl: urlMatch })
         } catch (err) {
