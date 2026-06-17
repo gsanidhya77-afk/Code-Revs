@@ -1,0 +1,41 @@
+{
+  "name": "dashboard",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/dashboard/src",
+  "projectType": "application",
+  "tags": ["scope:dashboard", "type:app"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "dependsOn": [],
+      "metadata": {
+        "description": "dependsOn: [] overrides targetDefaults' ^build. The dashboard consumes its workspace deps (@open-code-review/persistence, /config, /platform) as SOURCE — every shared package's `exports` point at src/*.ts and the build runs esbuild --conditions=source — so there is nothing to pre-build. Kept explicit so a future ^build re-add can't silently introduce a build edge. (cli:build:bundle still depends on dashboard:build to embed dashboard/dist; the reverse edge stays absent because the dashboard no longer depends on cli at all.)"
+      },
+      "options": {
+        "command": "pnpm build",
+        "cwd": "packages/dashboard"
+      }
+    },
+    "dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm dev",
+        "cwd": "packages/dashboard"
+      }
+    },
+    "test": {
+      "executor": "@nx/vitest:test",
+      "outputs": ["{workspaceRoot}/coverage/packages/dashboard"],
+      "options": {
+        "config": "packages/dashboard/vitest.config.ts"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p tsconfig.typecheck.json",
+        "cwd": "{projectRoot}"
+      }
+    }
+  }
+}

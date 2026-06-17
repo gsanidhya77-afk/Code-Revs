@@ -1,0 +1,17 @@
+{
+  "name": "aclarify",
+  "owner": {
+    "name": "Spencer Marx",
+    "url": "https://github.com/spencermarx"
+  },
+  "metadata": {
+    "description": "Multi-agent code review tools for AI-assisted development"
+  },
+  "plugins": [
+    {
+      "name": "ocr",
+      "source": "./packages/agents",
+      "category": "development"
+    }
+  ]
+}

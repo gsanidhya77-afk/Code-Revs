@@ -1,0 +1,79 @@
+{
+  "name": "cli",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/cli/src",
+  "projectType": "application",
+  "tags": ["scope:cli", "type:app"],
+  "targets": {
+    "build:bundle": {
+      "executor": "nx:run-commands",
+      "outputs": ["{projectRoot}/dist/index.js"],
+      "dependsOn": ["^build", { "target": "build", "projects": ["dashboard"] }],
+      "inputs": [
+        "production",
+        "^production",
+        "{workspaceRoot}/packages/dashboard/src/**/*",
+        "{workspaceRoot}/packages/dashboard/package.json"
+      ],
+      "metadata": {
+        "description": "Bundles the CLI and embeds dashboard/dist (build.mjs copies it). The dashboard dependency is a TARGET-level edge, not a project-graph edge (no implicitDependencies — that inverted the dashboard→cli layering), so ^production does NOT cover dashboard sources; the explicit dashboard inputs above keep the embedded dist fresh if this target is ever cached. Without them, enabling caching would silently ship stale-dashboard release bundles."
+      },
+      "options": {
+        "command": "node build.mjs",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "build": {
+      "dependsOn": ["build:bundle"]
+    },
+    "dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsx packages/cli/src/index.ts",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "init": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsx packages/cli/src/index.ts init",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "progress": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsx packages/cli/src/index.ts progress",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "update": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsx packages/cli/src/index.ts update",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "doctor": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsx packages/cli/src/index.ts doctor",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "test": {
+      "executor": "@nx/vitest:test",
+      "outputs": ["{workspaceRoot}/coverage/packages/cli"],
+      "options": {
+        "config": "packages/cli/vitest.config.ts"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p tsconfig.typecheck.json",
+        "cwd": "{projectRoot}"
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@open-code-review/cli-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "E2E smoke tests for the OCR CLI",
+  "type": "module",
+  "devDependencies": {
+    "@open-code-review/cli": "workspace:*"
+  }
+}

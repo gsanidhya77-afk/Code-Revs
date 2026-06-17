@@ -1,0 +1,236 @@
+import { Command } from "commander";
+import chalk from "chalk";
+import ora from "ora";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { AI_TOOLS, type AIToolConfig } from "../lib/config.js";
+import {
+  installForTool,
+  detectInstalledTools,
+  type InstallResult,
+} from "../lib/installer.js";
+import {
+  injectIntoProjectFiles,
+  plannedInstructionFiles,
+  findStaleInstructionFiles,
+  formatStaleWarnings,
+} from "../lib/injector.js";
+import { ensureGitignore } from "../lib/gitignore.js";
+import { requireOcrSetup } from "../lib/guards.js";
+import { getConfiguredToolIds, stampCliVersion } from "../lib/cli-config.js";
+import { CLI_VERSION } from "../lib/version.js";
+
+type UpdateOptions = {
+  commands?: boolean;
+  skills?: boolean;
+  inject?: boolean;
+  dryRun?: boolean;
+};
+
+/**
+ * Detect which AI tools have OCR commands installed
+ */
+function detectConfiguredTools(targetDir: string): AIToolConfig[] {
+  return AI_TOOLS.filter((tool) => {
+    // Check if tool has OCR commands installed
+    if (tool.commandStrategy === "subdirectory") {
+      const ocrDir = join(targetDir, tool.commandsDir, "ocr");
+      return existsSync(ocrDir);
+    } else {
+      // flat-prefixed: check for ocr-review.md
+      const reviewCmd = join(targetDir, tool.commandsDir, "ocr-review.md");
+      return existsSync(reviewCmd);
+    }
+  });
+}
+
+export const updateCommand = new Command("update")
+  .description("Update OCR assets after package upgrade")
+  .option("--commands", "Update only commands/workflows")
+  .option(
+    "--skills",
+    "Update only skills (includes templates, references, assets)",
+  )
+  .option("--inject", "Update only instruction-file injection (AGENTS.md + each tool's native file)")
+  .option("--dry-run", "Preview changes without modifying files")
+  .action(async (options: UpdateOptions) => {
+    const targetDir = process.cwd();
+
+    // Guard: Require OCR to be set up
+    requireOcrSetup(targetDir);
+
+    console.log();
+    console.log(chalk.bold.cyan("  Open Code Review - Update"));
+    console.log();
+
+    // Priority order for determining tools to update:
+    // 1. CLI config (user's saved preferences from init)
+    // 2. Detect tools with existing OCR commands installed
+    // 3. Detect tools with config directories (fallback)
+    const savedToolIds = getConfiguredToolIds(targetDir);
+    const configuredTools = detectConfiguredTools(targetDir);
+    const installedTools = detectInstalledTools(targetDir, AI_TOOLS);
+
+    let toolsToUpdate: AIToolConfig[];
+
+    if (savedToolIds.length > 0) {
+      // Use saved preferences from CLI config
+      toolsToUpdate = AI_TOOLS.filter((tool) => savedToolIds.includes(tool.id));
+    } else {
+      // Fallback: merge tools with OCR commands OR tool config directories
+      toolsToUpdate = AI_TOOLS.filter(
+        (tool) =>
+          configuredTools.some((t) => t.id === tool.id) ||
+          installedTools.some((t) => t.id === tool.id),
+      );
+    }
+
+    if (toolsToUpdate.length === 0) {
+      console.error(chalk.yellow("  No configured AI tools found."));
+      console.error(chalk.dim("  Run `ocr init` to set up OCR first."));
+      console.error();
+      process.exit(1);
+    }
+
+    // Determine what to update (default: all if no specific flag)
+    const hasSpecificFlag =
+      options.commands || options.skills || options.inject;
+    const updateCommands = options.commands || !hasSpecificFlag;
+    const updateSkills = options.skills || !hasSpecificFlag;
+    const updateInject = options.inject || !hasSpecificFlag;
+
+    if (options.dryRun) {
+      console.log(chalk.yellow("  Dry run mode - no files will be modified"));
+      console.log();
+    }
+
+    console.log(chalk.dim("  Detected tools:"));
+    for (const tool of toolsToUpdate) {
+      console.log(`    • ${tool.name}`);
+    }
+    console.log();
+
+    // Update commands/skills (--commands or --skills both trigger this)
+    if (updateCommands || updateSkills) {
+      if (options.dryRun) {
+        console.log(chalk.dim("  Would update:"));
+        console.log(chalk.dim("    • .ocr/skills/SKILL.md (main skill)"));
+        console.log(
+          chalk.dim("    • .ocr/skills/references/ (except reviewers/)"),
+        );
+        console.log(chalk.dim("    • .ocr/skills/assets/reviewer-template.md"));
+        console.log(chalk.dim("  Preserved (not modified):"));
+        console.log(chalk.dim("    • .ocr/config.yaml"));
+        console.log(
+          chalk.dim("    • .ocr/skills/references/reviewers/ (all reviewers)"),
+        );
+        for (const tool of toolsToUpdate) {
+          if (tool.commandStrategy === "subdirectory") {
+            console.log(chalk.dim(`    • ${tool.commandsDir}/ocr/ (commands)`));
+          } else {
+            console.log(
+              chalk.dim(`    • ${tool.commandsDir}/ocr-*.md (commands)`),
+            );
+          }
+        }
+        console.log();
+      } else {
+        const spinner = ora("Updating OCR commands and skills...").start();
+
+        const results: InstallResult[] = [];
+        for (const tool of toolsToUpdate) {
+          spinner.text = `Updating ${tool.name}...`;
+          const result = installForTool(tool, targetDir);
+          results.push(result);
+        }
+
+        // Refresh managed .gitignore block
+        ensureGitignore(join(targetDir, ".ocr"));
+
+        spinner.stop();
+
+        const successful = results.filter((r) => r.success);
+        const failed = results.filter((r) => !r.success);
+
+        if (successful.length > 0) {
+          console.log(chalk.green("  ✓ Commands and skills updated"));
+          console.log(
+            chalk.dim("    Including: SKILL.md, references/, assets/"),
+          );
+          for (const result of successful) {
+            console.log(`    ${chalk.green("✓")} ${result.tool.name}`);
+          }
+        }
+
+        if (failed.length > 0) {
+          console.log();
+          console.error(chalk.red("  ✗ Some updates failed:"));
+          for (const result of failed) {
+            console.error(
+              `    ${chalk.red("✗")} ${result.tool.name}: ${result.error}`,
+            );
+          }
+        }
+
+        // Display warnings from preservation failures
+        const allWarnings = results.flatMap((r) => r.warnings ?? []);
+        if (allWarnings.length > 0) {
+          console.log();
+          console.error(chalk.yellow("  ⚠ Warnings:"));
+          for (const warning of allWarnings) {
+            console.error(`    ${chalk.yellow("⚠")} ${warning}`);
+          }
+        }
+
+        console.log();
+      }
+    }
+
+    // Update instruction-file injection (AGENTS.md + each tool's native file)
+    if (updateInject) {
+      const planned = plannedInstructionFiles(toolsToUpdate);
+
+      if (options.dryRun) {
+        console.log(chalk.dim("  Would update:"));
+        for (const path of planned) {
+          const verb = existsSync(join(targetDir, path)) ? "update" : "create";
+          console.log(chalk.dim(`    • ${path} (${verb} OCR managed block)`));
+        }
+        const staleDry = findStaleInstructionFiles(targetDir, planned);
+        for (const warning of formatStaleWarnings(staleDry, "dry-run")) {
+          console.log(chalk.dim(`    • ${warning}`));
+        }
+        console.log();
+      } else {
+        const spinner = ora("Updating instruction files...").start();
+
+        const injectResults = injectIntoProjectFiles(targetDir, toolsToUpdate);
+        spinner.stop();
+
+        if (injectResults.written.length > 0) {
+          console.log(chalk.green("  ✓ Instructions updated"));
+          for (const path of injectResults.written) {
+            console.log(`    ${chalk.green("✓")} ${path}`);
+          }
+        } else {
+          console.log(chalk.dim("  No instruction files to update"));
+        }
+
+        const stale = findStaleInstructionFiles(targetDir, injectResults.written);
+        for (const warning of formatStaleWarnings(stale, "update")) {
+          console.log(chalk.yellow(`    ⚠ ${warning}`));
+        }
+
+        console.log();
+      }
+    }
+
+    if (options.dryRun) {
+      console.log(chalk.dim("  Run without --dry-run to apply changes."));
+    } else {
+      // Stamp the running CLI version so drift detection knows artifacts are current
+      stampCliVersion(targetDir, CLI_VERSION);
+      console.log(chalk.green("  ✓ Update complete"));
+    }
+    console.log();
+  });
