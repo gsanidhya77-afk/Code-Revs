@@ -571,14 +571,21 @@ The dashboard architecture SHALL be designed for extensibility without architect
 
 ### Requirement: Post Review to GitHub
 
-The dashboard SHALL allow posting a review round's final synthesis to GitHub as a PR comment from the round detail page, using the GitHub CLI (`gh`).
+The dashboard SHALL allow posting a review round's final synthesis to GitHub as a PR comment from the round detail page, using the GitHub CLI (`gh`). This MUST work for any public GitHub PR URL, not only PRs in the current local repository.
 
-#### Scenario: Check GitHub auth and PR detection
+#### Scenario: Check GitHub auth and PR detection (local repo)
 
-- **GIVEN** the user clicks "Post to GitHub" on a review round page
+- **GIVEN** the user clicks "Post to GitHub" on a review round page for a local-repo session
 - **WHEN** the client emits a `post:check-gh` Socket.IO event with the session ID
 - **THEN** the server checks `gh auth status` and looks up the PR via `gh pr list --head <branch>`
 - **AND** the server emits `post:gh-result` with `{ authenticated, prNumber, prUrl, branch }`
+
+#### Scenario: Check GitHub auth and PR detection (remote PR)
+
+- **GIVEN** the session was created from a remote GitHub PR URL (i.e. `remote-pr.json` exists in the session directory)
+- **WHEN** the client emits a `post:check-gh` Socket.IO event with the session ID
+- **THEN** the server checks `gh auth status` and reads `{ prUrl, prNumber }` directly from `remote-pr.json`
+- **AND** the server emits `post:gh-result` with `{ authenticated: true, prNumber, prUrl, branch }` without any local branch lookup
 
 #### Scenario: Branch resolution for encoded names
 
@@ -587,12 +594,21 @@ The dashboard SHALL allow posting a review round's final synthesis to GitHub as 
 - **THEN** the server SHALL try restoring common slash prefixes (e.g. `feat/my-feature`, `fix/my-feature`) and check each candidate
 - **AND** the first matching PR is returned with the resolved branch name
 
-#### Scenario: Post team review
+#### Scenario: Post team review (local repo)
 
-- **GIVEN** GitHub auth is confirmed and a PR is detected
+- **GIVEN** GitHub auth is confirmed and a local-repo PR is detected
 - **WHEN** the user chooses "Post Team Review"
 - **THEN** the raw `final.md` content is submitted via `gh pr comment <prNumber> --body-file`
 - **AND** a `post:submit-result` event is emitted with `{ success, commentUrl }`
+
+#### Scenario: Post team review (remote PR)
+
+- **GIVEN** GitHub auth is confirmed and a remote PR URL is known (`checkResult.prUrl` is non-null)
+- **WHEN** the user chooses "Post Team Review" or "Post to GitHub" from the preview step
+- **THEN** the client emits `post:submit` with `{ prNumber, content, prUrl }`
+- **AND** the server runs `gh pr comment <prUrl> --body-file <tmpFile>` (URL-based, not repo-scoped)
+- **AND** a `post:submit-result` event is emitted with `{ success, commentUrl }`
+- **AND** the system SHALL NOT fail solely because the PR belongs to a different repository than the current working directory
 
 #### Scenario: Successful post with comment URL
 
