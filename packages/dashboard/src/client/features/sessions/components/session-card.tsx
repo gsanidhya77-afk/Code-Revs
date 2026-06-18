@@ -77,7 +77,7 @@ export function SessionCard({ session }: SessionCardProps) {
   return (
     <Link
       to={`/sessions/${session.id}`}
-      className="group block rounded-lg border border-zinc-200 bg-white p-4 transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50"
+      className="group glass-card glass-card-hover block rounded-xl p-4"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">

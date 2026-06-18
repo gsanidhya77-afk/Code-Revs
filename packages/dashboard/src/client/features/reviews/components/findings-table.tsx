@@ -16,12 +16,6 @@ const SEVERITY_ORDER: Record<FindingSeverity, number> = {
   info: 4,
 }
 
-/**
- * Rank a finding's severity for sorting. An unrecognized severity (a degraded
- * row from a malformed or future-schema finding) sorts deterministically last
- * instead of producing `NaN` — which would make the comparator return `NaN` and
- * leave the table in an arbitrary, unstable order.
- */
 const UNKNOWN_SEVERITY_RANK = Number.MAX_SAFE_INTEGER
 function severityRank(severity: string): number {
   return SEVERITY_ORDER[severity as FindingSeverity] ?? UNKNOWN_SEVERITY_RANK
@@ -47,9 +41,9 @@ const TRIAGE_FILTER_OPTIONS: { value: FindingTriage | 'all'; label: string }[] =
 
 type FindingsTableProps = {
   findings: Finding[]
-  /** While the findings query is in flight, render a loading affordance instead
-   *  of an ambiguous "no findings" empty state. */
   isLoading?: boolean
+  sessionId?: string
+  roundNumber?: number
 }
 
 export function FindingsTable({ findings, isLoading = false }: FindingsTableProps) {
@@ -99,9 +93,6 @@ export function FindingsTable({ findings, isLoading = false }: FindingsTableProp
     })
   }, [filtered, sortField, sortDir])
 
-  // A finding whose severity isn't in the known vocabulary is a degraded row —
-  // surface it so an unrecognized severity reads as "sorted last" rather than a
-  // silent ordering glitch.
   const degradedCount = useMemo(
     () => findings.filter((f) => !(f.severity in SEVERITY_ORDER)).length,
     [findings],
@@ -111,7 +102,6 @@ export function FindingsTable({ findings, isLoading = false }: FindingsTableProp
     updateStatus.mutate({ findingId, status })
   }
 
-  // Loading: the query is still in flight. Distinct from a genuinely empty round.
   if (isLoading) {
     return (
       <p className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
@@ -120,8 +110,6 @@ export function FindingsTable({ findings, isLoading = false }: FindingsTableProp
     )
   }
 
-  // Genuinely empty: the round completed with no findings recorded. This is a
-  // legitimate, often-good outcome (a clean APPROVE), not a filter mismatch.
   if (findings.length === 0) {
     return (
       <p className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
@@ -132,15 +120,14 @@ export function FindingsTable({ findings, isLoading = false }: FindingsTableProp
 
   return (
     <div>
+      {/* Filter bar */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Filter className="h-4 w-4 text-zinc-400" />
         <div className="flex items-center gap-2">
           <span className="text-xs text-zinc-500 dark:text-zinc-400">Severity:</span>
           <select
             value={severityFilter}
-            onChange={(e) =>
-              setSeverityFilter(e.target.value as FindingSeverity | 'all')
-            }
+            onChange={(e) => setSeverityFilter(e.target.value as FindingSeverity | 'all')}
             className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
           >
             {SEVERITY_FILTER_OPTIONS.map((opt) => (
@@ -154,9 +141,7 @@ export function FindingsTable({ findings, isLoading = false }: FindingsTableProp
           <span className="text-xs text-zinc-500 dark:text-zinc-400">Status:</span>
           <select
             value={triageFilter}
-            onChange={(e) =>
-              setTriageFilter(e.target.value as FindingTriage | 'all')
-            }
+            onChange={(e) => setTriageFilter(e.target.value as FindingTriage | 'all')}
             className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
           >
             {TRIAGE_FILTER_OPTIONS.map((opt) => (
@@ -169,12 +154,13 @@ export function FindingsTable({ findings, isLoading = false }: FindingsTableProp
         <span className="text-xs text-zinc-400 dark:text-zinc-500">
           {sorted.length} of {findings.length} findings
         </span>
+
       </div>
 
       {degradedCount > 0 && (
         <p className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-          {degradedCount} finding{degradedCount === 1 ? '' : 's'} have an
-          unrecognized severity and are sorted last.
+          {degradedCount} finding{degradedCount === 1 ? '' : 's'} have an unrecognized severity and
+          are sorted last.
         </p>
       )}
 
@@ -231,6 +217,7 @@ export function FindingsTable({ findings, isLoading = false }: FindingsTableProp
           </table>
         </div>
       )}
+
     </div>
   )
 }

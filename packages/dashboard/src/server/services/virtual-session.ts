@@ -58,7 +58,13 @@ export function createVirtualSession(
   // session as a remote PR and use the correct URL-based gh command.
   writeFileSync(
     join(sessionDir, 'remote-pr.json'),
-    JSON.stringify({ prUrl: meta.url, owner: meta.owner, repo: meta.repo, prNumber: meta.prNumber }),
+    JSON.stringify({
+      prUrl: meta.url,
+      owner: meta.owner,
+      repo: meta.repo,
+      prNumber: meta.prNumber,
+      headRef: meta.headRef,
+    }),
     'utf-8',
   )
 

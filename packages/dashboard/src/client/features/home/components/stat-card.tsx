@@ -10,13 +10,15 @@ type StatCardProps = {
 
 export function StatCard({ title, value, icon: Icon, trend }: StatCardProps) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="glass-card glass-card-hover rounded-xl p-6">
       <div className="flex items-center justify-between">
-        <span className="text-sm text-zinc-500 dark:text-zinc-400">{title}</span>
-        <Icon className="h-4 w-4 text-zinc-400 dark:text-zinc-500" />
+        <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400">{title}</span>
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-100 dark:bg-emerald-500/10">
+          <Icon className="h-4 w-4 text-zinc-500 dark:text-emerald-400" />
+        </div>
       </div>
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+      <div className="mt-4 flex items-baseline gap-2">
+        <span className="font-mono text-3xl font-bold text-zinc-900 dark:text-white">
           {value}
         </span>
         {trend && (

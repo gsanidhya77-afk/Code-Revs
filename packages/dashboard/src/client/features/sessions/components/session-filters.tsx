@@ -62,7 +62,7 @@ export function SessionFilters({
   onWorkflowChange,
 }: SessionFiltersProps) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-center gap-2 md:gap-3">
       <span className="text-xs text-zinc-500 dark:text-zinc-400">Status:</span>
       <ButtonGroup
         label="Filter by status"

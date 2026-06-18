@@ -31,7 +31,6 @@ import { createReviewersRouter, watchReviewersMeta } from './routes/reviewers.js
 import { createAgentSessionsRouter } from './routes/agent-sessions.js'
 import { createHandoffRouter } from './routes/handoff.js'
 import { createTeamRouter } from './routes/team.js'
-import { createReposRouter } from './routes/repos.js'
 import { AiCliService } from './services/ai-cli/index.js'
 import { createSessionCaptureService } from './services/capture/session-capture-service.js'
 import { FilesystemSync } from './services/filesystem-sync.js'
@@ -40,6 +39,7 @@ import { registerCommandHandlers, clearAllSpawnMarkers } from './socket/command-
 import { registerChatHandlers, cleanupAllChats } from './socket/chat-handler.js'
 import { registerPostHandlers, cleanupAllPostGenerations } from './socket/post-handler.js'
 import { registerRemoteReviewHandlers } from './socket/remote-review-handler.js'
+import { registerFixHandlers } from './socket/fix-handler.js'
 import {
   replayCommandLog,
   sweepStaleAgentSessions,
@@ -513,7 +513,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   app.use('/api/stats', createStatsRouter(db))
   app.use('/api/commands', createCommandsRouter(db, ocrDir))
   app.use('/api/config', createConfigRouter(ocrDir, aiCliService))
-  app.use('/api/repos', createReposRouter(ocrDir))
   app.use('/api/sessions', createChatRouter(db))
   app.use('/api/reviewers', createReviewersRouter(ocrDir))
   // Pull-on-read for agent_session-backed routes: they read tables
@@ -567,6 +566,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
     registerChatHandlers(io, socket, db, ocrDir, aiCliService)
     registerPostHandlers(io, socket, db, ocrDir, aiCliService)
     registerRemoteReviewHandlers(io, socket, ocrDir, aiCliService)
+    registerFixHandlers(io, socket, ocrDir)
   })
 
   // ── DB sync watcher ──

@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 
-type ThemeMode = 'system' | 'light' | 'dark'
+type ThemeMode = 'light' | 'dark'
 type ResolvedTheme = 'light' | 'dark'
 
 type ThemeContextValue = {
@@ -24,43 +24,23 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null)
 
 const STORAGE_KEY = 'ocr-dashboard-theme'
-const CYCLE_ORDER: ThemeMode[] = ['system', 'light', 'dark']
-
-function getSystemTheme(): ResolvedTheme {
-  if (typeof window === 'undefined') return 'light'
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-function resolveTheme(mode: ThemeMode): ResolvedTheme {
-  return mode === 'system' ? getSystemTheme() : mode
-}
+const CYCLE_ORDER: ThemeMode[] = ['light', 'dark']
 
 function getStoredMode(): ThemeMode {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored
+    if (stored === 'light' || stored === 'dark') return stored
   } catch {
     // localStorage unavailable
   }
-  return 'system'
+  return 'dark'
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<ThemeMode>(getStoredMode)
-  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(getSystemTheme)
-
-  // Listen for OS theme changes
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = (e: MediaQueryListEvent) => {
-      setSystemTheme(e.matches ? 'dark' : 'light')
-    }
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [])
 
   // Apply theme class to <html> and swap favicon
-  const resolved = mode === 'system' ? systemTheme : mode
+  const resolved = mode
   useEffect(() => {
     const root = document.documentElement
     root.classList.remove('light', 'dark')
@@ -94,6 +74,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     () => ({ mode, resolved, cycle, theme: mode, toggleTheme: cycle }),
     [mode, resolved, cycle],
   )
+
 
   return <ThemeContext value={value}>{children}</ThemeContext>
 }

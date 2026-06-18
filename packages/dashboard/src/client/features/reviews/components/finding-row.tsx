@@ -97,9 +97,7 @@ export function FindingRow({ finding, onTriageChange }: FindingRowProps) {
         </td>
         <td className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
           {finding.is_blocker ? (
-            <span className="text-xs font-medium text-red-600 dark:text-red-400">
-              Yes
-            </span>
+            <span className="text-xs font-medium text-red-600 dark:text-red-400">Yes</span>
           ) : (
             <span className="text-xs text-zinc-400">No</span>
           )}
@@ -110,9 +108,7 @@ export function FindingRow({ finding, onTriageChange }: FindingRowProps) {
         >
           <select
             value={finding.progress?.status ?? 'unread'}
-            onChange={(e) =>
-              onTriageChange(finding.id, e.target.value as FindingTriage)
-            }
+            onChange={(e) => onTriageChange(finding.id, e.target.value as FindingTriage)}
             aria-label={`Triage status for ${finding.title}`}
             className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
           >
@@ -129,6 +125,7 @@ export function FindingRow({ finding, onTriageChange }: FindingRowProps) {
           <td
             colSpan={6}
             className="border-b border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50"
+            onClick={(e) => e.stopPropagation()}
           >
             {finding.summary ? (
               <MarkdownRenderer content={finding.summary} className="text-sm" />
