@@ -342,12 +342,30 @@ class ClaudeLineParser implements LineParser {
     // process necessarily exits, so the command-runner can finalize on this
     // instead of waiting for stdio EOF (which a leaked grandchild can hold
     // open). `subtype` is e.g. 'success' | 'error_max_turns'; `is_error` is
-    // the vendor's own failure flag.
+    // the vendor's own failure flag. `usage` carries API token counts when
+    // present (Claude Code includes them in the terminal result JSON).
     if (type === 'result') {
+      const rawUsage = parsed['usage'] as Record<string, unknown> | undefined
+      const usage =
+        rawUsage && typeof rawUsage === 'object'
+          ? {
+              inputTokens: typeof rawUsage['input_tokens'] === 'number' ? rawUsage['input_tokens'] : 0,
+              outputTokens: typeof rawUsage['output_tokens'] === 'number' ? rawUsage['output_tokens'] : 0,
+              cacheReadTokens:
+                typeof rawUsage['cache_read_input_tokens'] === 'number'
+                  ? rawUsage['cache_read_input_tokens']
+                  : 0,
+              cacheWriteTokens:
+                typeof rawUsage['cache_creation_input_tokens'] === 'number'
+                  ? rawUsage['cache_creation_input_tokens']
+                  : 0,
+            }
+          : undefined
       events.push({
         type: 'result',
         isError: parsed['is_error'] === true,
         subtype: typeof parsed['subtype'] === 'string' ? (parsed['subtype'] as string) : undefined,
+        usage,
       })
     }
 

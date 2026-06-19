@@ -759,6 +759,7 @@ function spawnAiCommand(
         // on stdio EOF.
         entry.resultSeenAt = Date.now()
         entry.resultIsError = evt.isError
+        if (evt.usage) entry.tokenUsage = evt.usage
         emitStreamEvent(evt)
         break
       }

@@ -65,6 +65,13 @@ findings in Phase 5.
 
 ### Output Format
 
+> **Output style**: `{output_style}` — `default` uses the standard format below;
+> `coderabbit` replaces it entirely with the format in
+> `references/output-styles.md` § *CodeRabbit Output Format*. When the Tech Lead
+> builds this prompt, it substitutes the active style's format block here.
+
+#### Default Format
+
 Structure your review as follows:
 
 ```markdown
@@ -111,6 +118,14 @@ Structure your review as follows:
 [Things you'd like other perspectives on]
 ```
 ```
+
+#### CodeRabbit Format (when `--style coderabbit`)
+
+When `--style coderabbit` is active the Tech Lead replaces the block above with
+the full CodeRabbit format from `references/output-styles.md`. The injected block
+covers: Walkthrough → Changed Files → Findings (file-grouped alert blocks with
+` ```suggestion ` fix snippets) → Nitpicks → What's Working Well → Clarifying
+Questions. See `references/output-styles.md` for the complete spec and style rules.
 
 ## Example Task Prompt
 

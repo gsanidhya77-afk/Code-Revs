@@ -45,6 +45,22 @@ export type DashboardStats = {
   unresolvedBlockers: number
 }
 
+export type AiUsageStats = {
+  totalSessions: number
+  vendorsUsed: number
+  modelsUsed: number
+  byVendor: { vendor: string; count: number }[]
+  byModel: { model: string; count: number }[]
+  byPersona: { persona: string; count: number }[]
+  tokens: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    sessionsWithUsage: number
+  }
+}
+
 export type ReviewRound = {
   id: number
   session_id: string
@@ -341,4 +357,31 @@ export type PostCheckResult = {
   prUrl: string | null
   branch: string | null
   error?: string
+}
+
+// ── Per-session (per-PR) AI usage + cost ──
+
+export type PerSessionUsageItem = {
+  sessionId: string
+  branch: string
+  status: string
+  workflowType: string
+  startedAt: string
+  updatedAt: string
+  aiExecutions: number
+  modelsUsed: string | null
+  /** GitHub PR URL when the review was triggered with one, otherwise null. */
+  prUrl: string | null
+  tokens: {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+    total: number
+  }
+  estimatedCostUsd: number
+}
+
+export type PerSessionUsageResponse = {
+  items: PerSessionUsageItem[]
 }

@@ -7,7 +7,7 @@ tags: [ocr, review, code-review]
 
 **Usage**
 ```
-/ocr-review [target] [--fresh] [--team <ids>] [--reviewer "<description>"]
+/ocr-review [target] [--fresh] [--team <ids>] [--reviewer "<description>"] [--style <style>]
 ```
 
 **Arguments**
@@ -15,15 +15,20 @@ tags: [ocr, review, code-review]
 - `--fresh` (optional): Clear any existing session for today's date and start from scratch.
 - `--team` (optional): Override the default reviewer team. Format: `reviewer-id:count,reviewer-id:count`. Example: `--team principal:2,martin-fowler:1`.
 - `--reviewer` (optional, repeatable): Add an ephemeral reviewer described in natural language. The Tech Lead will synthesize a focused reviewer persona from the description. Does not persist. Example: `--reviewer "Focus on error handling in the auth flow"`.
+- `--style` (optional): Output format for all reviewer agents. Default: `default`. Supported values:
+  - `default` — Standard OCR format (`## Summary`, `## Findings`, etc.)
+  - `coderabbit` — CodeRabbit-style output: file-grouped alert blocks (`[!CAUTION]`, `[!WARNING]`, `[!TIP]`, `[!NOTE]`), ` ```suggestion ` fix snippets, Walkthrough section, and Nitpicks rollup. See `references/output-styles.md` for the full spec.
 
 **Examples**
 ```
-/ocr-review                    # Review staged changes
-/ocr-review --fresh            # Clear today's session and start fresh
-/ocr-review HEAD~3             # Review last 3 commits
-/ocr-review feature/auth       # Review branch vs main
-/ocr-review src/api/           # Review specific directory
-/ocr-review --team principal:2,security:1   # Custom team composition
+/ocr-review                                        # Review staged changes (default style)
+/ocr-review --fresh                                # Clear today's session and start fresh
+/ocr-review HEAD~3                                 # Review last 3 commits
+/ocr-review feature/auth                           # Review branch vs main
+/ocr-review src/api/                               # Review specific directory
+/ocr-review --team principal:2,security:1          # Custom team composition
+/ocr-review --style coderabbit                     # CodeRabbit-style output from all reviewers
+/ocr-review --team security:2,principal:1 --style coderabbit   # Security focus + CodeRabbit format
 /ocr-review --reviewer "Review as a junior developer would"
 /ocr-review --team principal:1 --reviewer "Focus on error handling" --reviewer "Check accessibility"
 ```

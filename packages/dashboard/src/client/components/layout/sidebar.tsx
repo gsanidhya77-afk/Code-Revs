@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Home, GitBranch, FileSearch, Terminal, Users, X } from 'lucide-react'
+import { Home, GitBranch, FileSearch, Terminal, Users, FolderGit2, Bot, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { OcrLogoIcon } from '../ocr-logo'
 import { useSocket } from '../../providers/socket-provider'
@@ -13,6 +13,8 @@ const NAV_ITEMS = [
   { to: '/reviewers', label: 'Team', icon: Users },
   { to: '/sessions', label: 'Sessions', icon: GitBranch },
   { to: '/reviews', label: 'Reviews', icon: FileSearch },
+  { to: '/repositories', label: 'Repositories', icon: FolderGit2 },
+  { to: '/ai-usage', label: 'AI Usage', icon: Bot },
 ] as const
 
 const STATUS_COLORS: Record<string, string> = {

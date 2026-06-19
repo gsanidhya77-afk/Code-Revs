@@ -505,6 +505,25 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 15,
+    description:
+      "Add token usage columns to command_executions for tracking AI API consumption per session",
+    run: (db) => {
+      if (!columnExists(db, "command_executions", "input_tokens")) {
+        db.run("ALTER TABLE command_executions ADD COLUMN input_tokens INTEGER;");
+      }
+      if (!columnExists(db, "command_executions", "output_tokens")) {
+        db.run("ALTER TABLE command_executions ADD COLUMN output_tokens INTEGER;");
+      }
+      if (!columnExists(db, "command_executions", "cache_read_tokens")) {
+        db.run("ALTER TABLE command_executions ADD COLUMN cache_read_tokens INTEGER;");
+      }
+      if (!columnExists(db, "command_executions", "cache_write_tokens")) {
+        db.run("ALTER TABLE command_executions ADD COLUMN cache_write_tokens INTEGER;");
+      }
+    },
+  },
 ];
 
 /** Whether `table` currently has a column named `column` (for idempotent DDL). */

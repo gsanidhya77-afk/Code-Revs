@@ -24,6 +24,7 @@ import { createArtifactsRouter } from './routes/artifacts.js'
 import { createProgressRouter } from './routes/progress.js'
 import { createNotesRouter } from './routes/notes.js'
 import { createStatsRouter } from './routes/stats.js'
+import { createAiUsageRouter } from './routes/ai-usage.js'
 import { createCommandsRouter } from './routes/commands.js'
 import { createConfigRouter } from './routes/config.js'
 import { createChatRouter } from './routes/chat.js'
@@ -526,6 +527,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   app.use('/api', createProgressRouter(db))
   app.use('/api/notes', createNotesRouter(db))
   app.use('/api/stats', createStatsRouter(db))
+  app.use('/api/ai-usage', createAiUsageRouter(db))
   app.use('/api/commands', createCommandsRouter(db, ocrDir))
   app.use('/api/config', createConfigRouter(ocrDir, aiCliService))
   app.use('/api/sessions', createChatRouter(db))
