@@ -40,6 +40,7 @@ import { registerChatHandlers, cleanupAllChats } from './socket/chat-handler.js'
 import { registerPostHandlers, cleanupAllPostGenerations } from './socket/post-handler.js'
 import { registerRemoteReviewHandlers } from './socket/remote-review-handler.js'
 import { registerFixHandlers } from './socket/fix-handler.js'
+import { SlackBot, type SlackConfig } from './services/slack-bot.js'
 import {
   replayCommandLog,
   sweepStaleAgentSessions,
@@ -62,6 +63,20 @@ import { reconcileCompletedSessions } from '@open-code-review/persistence/state'
 import { homedir } from 'node:os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/** Read the optional `slack:` block from `.ocr/config.yaml`. Returns null if absent or incomplete. */
+function readSlackConfig(ocrDir: string): SlackConfig | null {
+  try {
+    const content = readFileSync(join(ocrDir, 'config.yaml'), 'utf-8')
+    const botToken = content.match(/^\s*bot_token:\s*["']?([^\s"'#]+)["']?/m)?.[1]
+    const appToken = content.match(/^\s*app_token:\s*["']?([^\s"'#]+)["']?/m)?.[1]
+    if (!botToken || !appToken) return null
+    const defaultTeam = content.match(/^\s*default_team:[ \t]*["']([^"']+)["']/m)?.[1]
+    return { bot_token: botToken, app_token: appToken, ...(defaultTeam ? { default_team: defaultTeam } : {}) }
+  } catch {
+    return null
+  }
+}
 
 /** Shorten an absolute path for display (replace homedir with ~). */
 function shortenPath(p: string): string {
@@ -595,12 +610,26 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   pullSync = () => dbSyncWatcher.syncFromDisk()
   console.log(`  Watching DB:       ${shortenPath(dbFilePath)}`)
 
+  // ── Slack bot (optional) ──
+  // Reads slack: block from .ocr/config.yaml. If present, starts a Socket Mode
+  // Bolt app. handleFinalMd is passed to FilesystemSync so the bot is notified
+  // whenever a review completes without any polling.
+  const slackBot = readSlackConfig(ocrDir)
+    ? new SlackBot(readSlackConfig(ocrDir)!, ocrDir, aiCliService)
+    : null
+  if (slackBot) await slackBot.start()
+
   // ── Filesystem sync ──
   // Parses .ocr/sessions/ markdown artifacts into SQLite,
   // then watches for live changes from CLI / agent workflows.
 
   const sessionsDir = join(ocrDir, 'sessions')
-  const fsSync = new FilesystemSync(db, sessionsDir, io)
+  const fsSync = new FilesystemSync(
+    db,
+    sessionsDir,
+    io,
+    slackBot ? (sessionDir, round, filePath) => { void slackBot.handleFinalMd(sessionDir, round) } : undefined,
+  )
   await fsSync.fullScan()
   fsSync.startWatching()
   console.log(`  Watching sessions: ${shortenPath(sessionsDir)}`)
@@ -738,6 +767,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
     cleanupAllChats()
     cleanupAllPostGenerations()
 
+    if (slackBot) await slackBot.stop().catch(() => {})
     dbSyncWatcher.stopWatching()
     fsSync.stopWatching()
     stopReviewersWatch()

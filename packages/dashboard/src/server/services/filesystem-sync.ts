@@ -96,6 +96,9 @@ export class FilesystemSync {
     private db: Database,
     private sessionsDir: string,
     private io?: SocketIOServer,
+    /** Optional callback fired whenever a final.md is parsed — used by integrations
+     *  (e.g. Slack bot) to detect review completion without polling. */
+    private onFinalMd?: (sessionDir: string, roundNumber: number, filePath: string) => void,
   ) {}
 
   // ── 6.1: Full Scan ──
@@ -1330,6 +1333,12 @@ export class FilesystemSync {
       roundNumber,
       filePath,
     })
+
+    // Notify integrations (e.g. Slack bot) that a final review is ready
+    if (this.onFinalMd) {
+      const sessionDir = join(this.sessionsDir, sessionId)
+      this.onFinalMd(sessionDir, roundNumber, filePath)
+    }
   }
 
   // ── Generic artifact (discourse, topology, etc.) ──
@@ -1416,8 +1425,11 @@ export class FilesystemSync {
   }
 
   private processChangedFile(filePath: string): void {
-    // Determine session from path
-    const relFromSessions = relative(this.sessionsDir, filePath)
+    // Determine session from path.
+    // Normalize to forward slashes so the routing regexes below work on Windows
+    // (path.relative() returns backslash paths on Windows, which breaks all the
+    // /rounds\/.../ patterns).
+    const relFromSessions = relative(this.sessionsDir, filePath).replace(/\\/g, '/')
     const parts = relFromSessions.split('/')
     const sessionId = parts[0]
     if (!sessionId) return
