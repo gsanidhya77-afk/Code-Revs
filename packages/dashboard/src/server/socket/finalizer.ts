@@ -27,6 +27,8 @@
  * the DB CAS de-dupes across processes.
  */
 
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Server as SocketIOServer } from 'socket.io'
 import type { Database } from '@open-code-review/persistence'
 import { appendCommandLog, CANCELLED_EXIT_CODE } from '@open-code-review/persistence'
@@ -95,18 +97,41 @@ export function finishExecution(
   // Clears the watchdog + tailer as part of the claim.
   if (!tryClaimFinalization(entry)) return
 
+  // Fallback: if the in-memory tokenUsage was not set (result event processed
+  // after finalization claimed, or delivered via a path that bypassed
+  // handleEvent), scan the exec log file for the terminal `result` line and
+  // parse usage directly. Best-effort — any failure is silently ignored so the
+  // finalization never blocks on it.
+  if (entry && !entry.tokenUsage && entry.uid) {
+    entry.tokenUsage = parseTokenUsageFromLog(ocrDir, entry.uid)
+  }
+
   // CAS write — only finalize a row still in-flight, so a late close after an
   // already-finalized result can never clobber the recorded exit code. Use the
   // native prepared statement: the engine's `run()` returns void (it discards
   // node:sqlite's StatementResultingChanges), whereas `prepare().run()` hands
   // back `{ changes }` — which the CAS check below depends on.
+  const tokenUsage = entry?.tokenUsage ?? null
   const res = db
     .prepare(
       `UPDATE command_executions
-       SET exit_code = ?, finished_at = ?, output = ?, pid = NULL
+       SET exit_code = ?, finished_at = ?, output = ?, pid = NULL,
+           input_tokens = COALESCE(input_tokens, ?),
+           output_tokens = COALESCE(output_tokens, ?),
+           cache_read_tokens = COALESCE(cache_read_tokens, ?),
+           cache_write_tokens = COALESCE(cache_write_tokens, ?)
        WHERE id = ? AND finished_at IS NULL`
     )
-    .run(code, finishedAt, output, executionId)
+    .run(
+      code,
+      finishedAt,
+      output,
+      tokenUsage?.inputTokens ?? null,
+      tokenUsage?.outputTokens ?? null,
+      tokenUsage?.cacheReadTokens ?? null,
+      tokenUsage?.cacheWriteTokens ?? null,
+      executionId,
+    )
   // Row already finalized in the DB (e.g. by a prior trigger on a stale entry)
   // — nothing more to emit. `changes` is typed number|bigint; coerce so the
   // zero-check is robust regardless of the binding's numeric representation.
@@ -171,6 +196,7 @@ export function finishExecution(
       .then((outcome) => {
         if (outcome === 'closed') {
           console.log(`[command-runner] auto-finalized workflow ${workflowId}`)
+          injectCostIntoFinalMd(db, workflowId)
         } else if (outcome === 'incomplete' || outcome === 'in-flight') {
           console.debug(
             `[command-runner] workflow ${workflowId} not finalized: ${outcome}`,
@@ -183,5 +209,163 @@ export function finishExecution(
           err instanceof Error ? err.message : err,
         )
       })
+  }
+}
+
+/**
+ * Last-resort token recovery: scans the per-execution log file for the
+ * terminal `{"type":"result",...}` line and extracts usage from it.
+ *
+ * Called when `entry.tokenUsage` is null at finalization time — which happens
+ * when the result event was written to the log file but not yet read by the
+ * file tailer before finalization claimed (e.g. the watchdog fired between
+ * the last tailer poll and the process exit). Reads the log synchronously so
+ * it can run inline in the same finalization call before the DB update.
+ */
+function parseTokenUsageFromLog(
+  ocrDir: string,
+  uid: string,
+): { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined {
+  try {
+    const logPath = join(ocrDir, 'data', 'exec-logs', `${uid}.log`)
+    if (!existsSync(logPath)) return undefined
+
+    const content = readFileSync(logPath, 'utf8')
+    // Scan lines in reverse — the result line is always last
+    const lines = content.split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]?.trim()
+      if (!line) continue
+      let parsed: Record<string, unknown>
+      try {
+        parsed = JSON.parse(line) as Record<string, unknown>
+      } catch {
+        continue
+      }
+      if (parsed['type'] !== 'result') continue
+
+      const rawUsage = parsed['usage'] as Record<string, unknown> | undefined
+      if (!rawUsage || typeof rawUsage !== 'object') return undefined
+
+      return {
+        inputTokens:      typeof rawUsage['input_tokens'] === 'number' ? rawUsage['input_tokens'] : 0,
+        outputTokens:     typeof rawUsage['output_tokens'] === 'number' ? rawUsage['output_tokens'] : 0,
+        cacheReadTokens:  typeof rawUsage['cache_read_input_tokens'] === 'number' ? rawUsage['cache_read_input_tokens'] : 0,
+        cacheWriteTokens: typeof rawUsage['cache_creation_input_tokens'] === 'number' ? rawUsage['cache_creation_input_tokens'] : 0,
+      }
+    }
+  } catch {
+    // best-effort — never block finalization
+  }
+  return undefined
+}
+
+// ── Claude pricing (USD per 1M tokens, approximate mid-2025 rates) ──
+const COST_PRICING_PER_1M = {
+  opus:   { input: 15,   output: 75,  cacheRead: 1.5,  cacheWrite: 18.75 },
+  sonnet: { input: 3,    output: 15,  cacheRead: 0.3,  cacheWrite: 3.75  },
+  haiku:  { input: 0.8,  output: 4,   cacheRead: 0.08, cacheWrite: 1.0   },
+} as const
+
+function formatCostUsd(usd: number): string {
+  if (usd < 0.0001) return '<$0.0001'
+  if (usd < 0.01) return `$${usd.toFixed(4)}`
+  if (usd < 1) return `$${usd.toFixed(3)}`
+  return `$${usd.toFixed(2)}`
+}
+
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(n)
+}
+
+/**
+ * Appends a "## AI Cost" section to the session's latest final.md once the
+ * workflow closes. Reads token sums from `command_executions`, estimates cost
+ * using the same pricing table as the AI Usage dashboard, then writes the
+ * section to disk. Idempotent — exits early if the section is already present
+ * or if no token data is available.
+ */
+function injectCostIntoFinalMd(db: Database, workflowId: string): void {
+  try {
+    // 1. Locate the session's latest round directory
+    const sessionRows = db.exec(
+      'SELECT session_dir, current_round FROM sessions WHERE id = ?',
+      [workflowId],
+    )
+    const sessionRow = sessionRows[0]?.values[0]
+    if (!sessionRow) return
+
+    const [sessionDir, currentRound] = sessionRow
+    if (typeof sessionDir !== 'string' || typeof currentRound !== 'number') return
+
+    const finalPath = join(sessionDir, 'rounds', `round-${currentRound}`, 'final.md')
+    if (!existsSync(finalPath)) return
+
+    const existing = readFileSync(finalPath, 'utf8')
+    if (existing.includes('## AI Cost')) return  // already injected
+
+    // 2. Aggregate token usage across all AI executions for this session
+    const tokenRows = db.exec(
+      `SELECT
+         COALESCE(SUM(input_tokens), 0)       AS input,
+         COALESCE(SUM(output_tokens), 0)      AS output,
+         COALESCE(SUM(cache_read_tokens), 0)  AS cache_read,
+         COALESCE(SUM(cache_write_tokens), 0) AS cache_write,
+         GROUP_CONCAT(DISTINCT COALESCE(resolved_model, vendor)) AS models_used
+       FROM command_executions
+       WHERE workflow_id = ? AND vendor IS NOT NULL`,
+      [workflowId],
+    )
+    const tokenRow = tokenRows[0]?.values[0]
+    if (!tokenRow) return
+
+    const [inputRaw, outputRaw, cacheReadRaw, cacheWriteRaw, modelsUsedRaw] = tokenRow
+    const input      = Number(inputRaw)
+    const output     = Number(outputRaw)
+    const cacheRead  = Number(cacheReadRaw)
+    const cacheWrite = Number(cacheWriteRaw)
+    const totalTokens = input + output + cacheRead + cacheWrite
+    if (totalTokens === 0) return
+
+    // 3. Estimate cost (same tier logic as the AI Usage route)
+    const models = typeof modelsUsedRaw === 'string' ? modelsUsedRaw.toLowerCase() : ''
+    const tier = models.includes('opus') ? 'opus' : models.includes('haiku') ? 'haiku' : 'sonnet'
+    const p = COST_PRICING_PER_1M[tier]
+    const costUsd =
+      (input      / 1_000_000) * p.input      +
+      (output     / 1_000_000) * p.output     +
+      (cacheRead  / 1_000_000) * p.cacheRead  +
+      (cacheWrite / 1_000_000) * p.cacheWrite
+
+    // 4. Append cost section to final.md
+    const costSection = [
+      '',
+      '---',
+      '',
+      '## AI Cost',
+      '',
+      '| | Tokens |',
+      '|---|---|',
+      `| Input | ${formatTokenCount(input)} |`,
+      `| Output | ${formatTokenCount(output)} |`,
+      `| Cache Read | ${formatTokenCount(cacheRead)} |`,
+      `| Cache Write | ${formatTokenCount(cacheWrite)} |`,
+      `| **Total** | **${formatTokenCount(totalTokens)}** |`,
+      '',
+      `**Estimated cost**: ${formatCostUsd(costUsd)}`,
+      '',
+      `> Estimate based on public Claude API pricing (${tier} tier). Actual charges depend on your plan.`,
+      '',
+    ].join('\n')
+
+    writeFileSync(finalPath, existing + costSection, 'utf8')
+    console.log(`[command-runner] injected cost (${formatCostUsd(costUsd)}) into ${finalPath}`)
+  } catch (err) {
+    console.error(
+      `[command-runner] injectCostIntoFinalMd(${workflowId}) failed:`,
+      err instanceof Error ? err.message : err,
+    )
   }
 }

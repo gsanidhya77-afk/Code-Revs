@@ -488,6 +488,15 @@ instantiation strategy your host CLI supports (parallel sub-agents or sequential
 
 1. Load reviewer personas from `references/reviewers/`.
 
+1a. **Resolve the active output style** (if `--style` was passed):
+
+   | `--style` value | Action |
+   |-----------------|--------|
+   | `default` (or omitted) | Use the standard `### Output Format` block from `references/reviewer-task.md` |
+   | `coderabbit` | Read `references/output-styles.md` § *CodeRabbit Output Format*. In each reviewer's task prompt, **replace** the `### Output Format` / `#### Default Format` block with the CodeRabbit format block from that section. |
+
+   Store the resolved style as `$OUTPUT_STYLE` for use in step 3 below.
+
 2. **Resolve the team composition** by calling:
 
    ```bash

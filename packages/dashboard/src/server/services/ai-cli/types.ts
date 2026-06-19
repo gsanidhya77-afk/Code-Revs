@@ -60,8 +60,20 @@ export type NormalizedEvent =
    * line) — work is functionally done, emitted BEFORE the process necessarily
    * exits. The command-runner uses this as the primary finalize trigger so
    * finalization no longer hinges on stdio EOF (which a leaked grandchild can
-   * hold open forever). `isError` reflects a failed / `error_max_turns` result. */
-  | { type: 'result'; isError: boolean; subtype?: string }
+   * hold open forever). `isError` reflects a failed / `error_max_turns` result.
+   * `usage` carries API token counts when the vendor includes them in its
+   * terminal result line (Claude Code does; other adapters may omit it). */
+  | {
+      type: 'result'
+      isError: boolean
+      subtype?: string
+      usage?: {
+        inputTokens: number
+        outputTokens: number
+        cacheReadTokens: number
+        cacheWriteTokens: number
+      }
+    }
 
 // ── Stream Events ──
 // What command-runner persists to JSONL and emits via socket. Adds the

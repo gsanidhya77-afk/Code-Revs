@@ -43,6 +43,13 @@ export type ProcessEntry = {
   resultSeenAt?: number
   /** Whether the terminal `result` reported an error (sets the watchdog exit code). */
   resultIsError?: boolean
+  /** Token usage reported in the terminal `result` event — written to DB on finalize. */
+  tokenUsage?: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+  }
   /** Per-execution supervisor/watchdog timer; cleared on finalize. */
   watchdog?: ReturnType<typeof setInterval>
   /** Last epoch ms a heartbeat was written for this row (throttle). */

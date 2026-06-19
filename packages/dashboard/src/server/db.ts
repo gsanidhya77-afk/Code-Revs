@@ -720,6 +720,172 @@ export type StatsResult = {
   unresolved_blockers: number
 }
 
+// ── Token Usage queries ──
+
+export type TokenUsageResult = {
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cache_read_tokens: number
+  total_cache_write_tokens: number
+  sessions_with_usage: number
+}
+
+export function getTokenUsage(db: Database): TokenUsageResult {
+  const row = resultToRow<TokenUsageResult>(
+    db.exec(
+      `SELECT
+        COALESCE(SUM(input_tokens), 0)       as total_input_tokens,
+        COALESCE(SUM(output_tokens), 0)      as total_output_tokens,
+        COALESCE(SUM(cache_read_tokens), 0)  as total_cache_read_tokens,
+        COALESCE(SUM(cache_write_tokens), 0) as total_cache_write_tokens,
+        COUNT(CASE WHEN input_tokens IS NOT NULL THEN 1 END) as sessions_with_usage
+       FROM command_executions
+       WHERE vendor IS NOT NULL`
+    )
+  )
+  return {
+    total_input_tokens: row?.total_input_tokens ?? 0,
+    total_output_tokens: row?.total_output_tokens ?? 0,
+    total_cache_read_tokens: row?.total_cache_read_tokens ?? 0,
+    total_cache_write_tokens: row?.total_cache_write_tokens ?? 0,
+    sessions_with_usage: row?.sessions_with_usage ?? 0,
+  }
+}
+
+// ── AI Usage queries ──
+
+export type AiUsageVendorRow = { vendor: string; count: number }
+export type AiUsageModelRow = { model: string; count: number }
+export type AiUsagePersonaRow = { persona: string; count: number }
+
+export type AiUsageResult = {
+  total_sessions: number
+  vendors_used: number
+  models_used: number
+  by_vendor: AiUsageVendorRow[]
+  by_model: AiUsageModelRow[]
+  by_persona: AiUsagePersonaRow[]
+}
+
+export function getAiUsage(db: Database): AiUsageResult {
+  const totals = resultToRow<{ total: number; vendors: number; models: number }>(
+    db.exec(
+      `SELECT
+        COUNT(*) as total,
+        COUNT(DISTINCT vendor) as vendors,
+        COUNT(DISTINCT resolved_model) as models
+       FROM command_executions
+       WHERE vendor IS NOT NULL`
+    )
+  )
+
+  const byVendor = resultToRows<{ vendor: string; count: number }>(
+    db.exec(
+      `SELECT vendor, COUNT(*) as count
+       FROM command_executions
+       WHERE vendor IS NOT NULL
+       GROUP BY vendor
+       ORDER BY count DESC`
+    )
+  )
+
+  const byModel = resultToRows<{ resolved_model: string | null; count: number }>(
+    db.exec(
+      `SELECT resolved_model, COUNT(*) as count
+       FROM command_executions
+       WHERE vendor IS NOT NULL AND resolved_model IS NOT NULL
+       GROUP BY resolved_model
+       ORDER BY count DESC`
+    )
+  )
+
+  const byPersona = resultToRows<{ persona: string | null; count: number }>(
+    db.exec(
+      `SELECT persona, COUNT(*) as count
+       FROM command_executions
+       WHERE vendor IS NOT NULL AND persona IS NOT NULL
+       GROUP BY persona
+       ORDER BY count DESC
+       LIMIT 20`
+    )
+  )
+
+  return {
+    total_sessions: totals?.total ?? 0,
+    vendors_used: totals?.vendors ?? 0,
+    models_used: totals?.models ?? 0,
+    by_vendor: byVendor.map((r) => ({ vendor: r.vendor, count: r.count })),
+    by_model: byModel
+      .filter((r) => r.resolved_model != null)
+      .map((r) => ({ model: r.resolved_model as string, count: r.count })),
+    by_persona: byPersona
+      .filter((r) => r.persona != null)
+      .map((r) => ({ persona: r.persona as string, count: r.count })),
+  }
+}
+
+// ── Per-session token usage ──
+
+export type PerSessionUsageRow = {
+  session_id: string
+  branch: string
+  status: string
+  workflow_type: string
+  started_at: string
+  updated_at: string
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  ai_executions: number
+  models_used: string | null
+  /** First arg of the supervisor execution — may be a PR URL, branch, or "staged". */
+  pr_target: string | null
+}
+
+export function getPerSessionUsage(db: Database, limit = 50): PerSessionUsageRow[] {
+  // Anchor on orchestration_events — the CLI writes round_started/round_completed
+  // events with session_id reliably, regardless of whether the spawn-marker
+  // workflow_id link on command_executions was established. This means any
+  // session that actually ran a review/map pipeline will appear in the table.
+  // Token data is LEFT-JOINed from command_executions (0 if the link failed).
+  const rows = resultToRows<PerSessionUsageRow>(
+    db.exec(
+      `SELECT
+         s.id           AS session_id,
+         s.branch,
+         s.status,
+         s.workflow_type,
+         s.started_at,
+         s.updated_at,
+         COALESCE(SUM(ce.input_tokens), 0)       AS input_tokens,
+         COALESCE(SUM(ce.output_tokens), 0)      AS output_tokens,
+         COALESCE(SUM(ce.cache_read_tokens), 0)  AS cache_read_tokens,
+         COALESCE(SUM(ce.cache_write_tokens), 0) AS cache_write_tokens,
+         COUNT(DISTINCT ce.id)                   AS ai_executions,
+         GROUP_CONCAT(DISTINCT COALESCE(ce.resolved_model, ce.vendor)) AS models_used,
+         (SELECT json_extract(ce2.args, '$[0]')
+          FROM command_executions ce2
+          WHERE ce2.workflow_id = s.id AND ce2.vendor IS NOT NULL
+          ORDER BY ce2.id ASC
+          LIMIT 1)                               AS pr_target
+       FROM sessions s
+       LEFT JOIN command_executions ce
+         ON ce.workflow_id = s.id AND ce.vendor IS NOT NULL
+       WHERE EXISTS (
+         SELECT 1 FROM orchestration_events oe
+          WHERE oe.session_id = s.id
+            AND oe.event_type IN ('round_started', 'round_completed', 'map_completed')
+       )
+       GROUP BY s.id
+       ORDER BY s.started_at DESC
+       LIMIT ?`,
+      [limit],
+    ),
+  )
+  return rows
+}
+
 export function getStats(db: Database): StatsResult {
   const row = resultToRow<StatsResult>(
     db.exec(
