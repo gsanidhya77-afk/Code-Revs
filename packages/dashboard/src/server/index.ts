@@ -71,7 +71,7 @@ function readSlackConfig(ocrDir: string): SlackConfig | null {
     const botToken = content.match(/^\s*bot_token:\s*["']?([^\s"'#]+)["']?/m)?.[1]
     const appToken = content.match(/^\s*app_token:\s*["']?([^\s"'#]+)["']?/m)?.[1]
     if (!botToken || !appToken) return null
-    const defaultTeam = content.match(/^\s*default_team:\s*["']?([^\s"'#]+)["']?/m)?.[1]
+    const defaultTeam = content.match(/^\s*default_team:[ \t]*["']([^"']+)["']/m)?.[1]
     return { bot_token: botToken, app_token: appToken, ...(defaultTeam ? { default_team: defaultTeam } : {}) }
   } catch {
     return null

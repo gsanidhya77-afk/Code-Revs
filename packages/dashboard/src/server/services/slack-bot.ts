@@ -17,13 +17,17 @@
  *     default_team: "principal:2,security:1"   # optional
  */
 
-import { readFileSync, existsSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync, readdirSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { App, LogLevel } from '@slack/bolt'
+import { execBinaryAsync } from '@open-code-review/platform'
 import { SlackReviewStore } from './slack-review-store.js'
 import type { AiCliService } from './ai-cli/index.js'
 import { buildPrompt } from '../socket/prompt-builder.js'
 import { resolveLocalCli } from '../socket/cli-resolver.js'
+import { cleanEnv } from '../socket/env.js'
 
 // ── Public config type (read from config.yaml slack: block) ──
 
@@ -92,6 +96,7 @@ export class SlackBot {
       const text    = e.text ?? ''
       const userId  = e.user ?? ''
       const channel = e.channel
+      console.log(`[slack-bot] app_mention received — user:${userId} channel:${channel} text:${text.slice(0, 80)}`)
 
       const parsed = parsePrUrl(text)
       if (!parsed) {
@@ -120,7 +125,12 @@ export class SlackBot {
       // ── Track ──
       this.store.track({ prUrl, prOwner: owner, prRepo: repo, prNumber, slackUserId: userId, channelId: channel, startTime })
 
-      // ── Acknowledge ──
+      // ── Acknowledge in channel (visible to everyone) ──
+      await this.post(channel, e.ts,
+        `:mag: On it! Reviewing ${prLabel} now.\n${prUrl}\n• *Team:* \`${this.defaultTeam}\` • *Started:* ${fmtTime(startTime)}\nI'll DM <@${userId}> when the review is complete.`,
+      )
+
+      // ── DM requester too ──
       await this.dm(userId,
         `:mag: Review started for ${prLabel}\n${prUrl}\n\n• *Team:* \`${this.defaultTeam}\`\n• *Started:* ${fmtTime(startTime)}\n\nI'll DM you when the review is complete.`,
       )
@@ -129,6 +139,9 @@ export class SlackBot {
       this.spawnReview(prUrl, owner, repo, prNumber, userId).catch((err: unknown) => {
         console.error(`[slack-bot] spawn failed for ${prUrl}:`, err)
         this.store.remove(prUrl)
+        void this.post(channel, e.ts,
+          `:x: <@${userId}> Failed to start review for ${prLabel}. Make sure Claude Code is installed and \`ocr init\` has been run.`,
+        )
         void this.dm(userId,
           `:x: Failed to start review for ${prLabel}. Make sure Claude Code is installed and \`ocr init\` has been run in this project.`,
         )
@@ -138,26 +151,96 @@ export class SlackBot {
 
   // ── Called by FilesystemSync when final.md is written ──
 
-  async handleFinalMd(sessionDir: string, _roundNumber: number): Promise<void> {
+  async handleFinalMd(sessionDir: string, roundNumber: number): Promise<void> {
     let entry = this.store.getBySessionDir(sessionDir)
 
     if (!entry) {
       const meta = readRemotePrJson(sessionDir)
-      if (!meta) return
-      entry = this.store.get(meta.prUrl)
-      if (!entry) return
-      this.store.linkSession(meta.prUrl, sessionDir)
+      if (meta) {
+        entry = this.store.get(meta.prUrl)
+        if (entry) this.store.linkSession(meta.prUrl, sessionDir)
+      }
     }
+
+    // Fallback: Claude Code may have reused an existing local session instead of
+    // creating a new one for the remote PR (no remote-pr.json written). If exactly
+    // one review is in flight, it must be this one — link it heuristically.
+    if (!entry) {
+      const active = this.store.all()
+      if (active.length === 1) {
+        entry = active[0]!
+        this.store.linkSession(entry.prUrl, sessionDir)
+        console.warn(`[slack-bot] heuristic session match: ${entry.prUrl} → ${sessionDir}`)
+      }
+    }
+
+    if (!entry) return
 
     const endTime = new Date()
     const prLabel = `*${entry.prOwner}/${entry.prRepo}* PR #${entry.prNumber}`
     const duration = fmtDuration(entry.startTime.getTime(), endTime.getTime())
 
-    await this.dm(entry.slackUserId,
-      `:white_check_mark: Review complete for ${prLabel}\n${entry.prUrl}\n\n• *Started:* ${fmtTime(entry.startTime)}\n• *Finished:* ${fmtTime(endTime)}\n• *Duration:* ${duration}`,
+    // ── Notify in channel ──
+    await this.post(entry.channelId, undefined,
+      `:white_check_mark: Review complete for ${prLabel} (requested by <@${entry.slackUserId}>)\n${entry.prUrl}\n• *Duration:* ${duration} • *Started:* ${fmtTime(entry.startTime)} • *Finished:* ${fmtTime(endTime)}\n_Posting review to GitHub..._`,
     )
 
+    // ── DM requester ──
+    await this.dm(entry.slackUserId,
+      `:white_check_mark: Review complete for ${prLabel}\n${entry.prUrl}\n\n• *Started:* ${fmtTime(entry.startTime)}\n• *Finished:* ${fmtTime(endTime)}\n• *Duration:* ${duration}\n\n_Posting to GitHub PR..._`,
+    )
+
+    // ── Auto-post to GitHub ──
+    const commentUrl = await this.autoPostToGitHub(entry.prUrl, sessionDir, roundNumber)
+    if (commentUrl) {
+      await this.post(entry.channelId, undefined,
+        `:github: Review posted to GitHub: ${commentUrl}`,
+      )
+      await this.dm(entry.slackUserId,
+        `:github: Review posted to GitHub!\n${commentUrl}`,
+      )
+    } else {
+      await this.dm(entry.slackUserId,
+        `:warning: Could not auto-post to GitHub (check \`gh auth status\`). Use the *Post to GitHub* button in the dashboard instead.`,
+      )
+    }
+
     this.store.remove(entry.prUrl)
+  }
+
+  // ── GitHub auto-poster ──
+
+  private async autoPostToGitHub(prUrl: string, sessionDir: string, roundNumber: number): Promise<string | null> {
+    // Prefer human-translated review, fall back to raw final.md
+    const roundDir = join(sessionDir, 'rounds', `round-${roundNumber}`)
+    const humanPath = join(roundDir, 'final-human.md')
+    const finalPath = join(roundDir, 'final.md')
+    const contentPath = existsSync(humanPath) ? humanPath : existsSync(finalPath) ? finalPath : null
+    if (!contentPath) {
+      console.warn(`[slack-bot] autoPostToGitHub: no review file found in ${roundDir}`)
+      return null
+    }
+
+    const content = readFileSync(contentPath, 'utf-8')
+
+    const tmpDir = join(tmpdir(), 'ocr-post-comments')
+    try { mkdirSync(tmpDir, { recursive: true }) } catch { /* exists */ }
+    const tmpFile = join(tmpDir, `${randomUUID()}.md`)
+    writeFileSync(tmpFile, content)
+
+    try {
+      const { stdout } = await execBinaryAsync(
+        'gh',
+        ['pr', 'comment', prUrl, '--body-file', tmpFile],
+        { env: cleanEnv(), cwd: dirname(this.ocrDir), encoding: 'utf-8' },
+      )
+      return stdout.match(/(https:\/\/github\.com\S+)/)?.[0] ?? prUrl
+    } catch (err) {
+      console.error('[slack-bot] GitHub post failed:', err)
+      return null
+    } finally {
+      try { unlinkSync(tmpFile) } catch { /* ignore */ }
+    }
   }
 
   // ── Review spawner ──
@@ -165,6 +248,36 @@ export class SlackBot {
   private async spawnReview(prUrl: string, owner: string, repo: string, prNumber: number, userId: string): Promise<void> {
     const adapter = this.aiCliService.getAdapter()
     if (!adapter) throw new Error('No AI CLI adapter available (install Claude Code or OpenCode)')
+
+    // Pre-fetch the PR's head branch so we can create the correct session dir
+    // before Claude Code runs — ensures handleFinalMd can always find the store entry
+    // even if the underlying CLI reuses an existing local session.
+    let headRef = `${repo}-pr-${prNumber}`
+    try {
+      const { stdout } = await execBinaryAsync('gh', ['pr', 'view', prUrl, '--json', 'headRefName'], {
+        env: cleanEnv(), encoding: 'utf-8',
+      })
+      const parsed = JSON.parse(stdout) as { headRefName?: string }
+      if (parsed.headRefName) headRef = parsed.headRefName
+    } catch { /* keep default */ }
+
+    // Pre-create session dir + remote-pr.json so FilesystemSync can match this
+    // review to the store entry the moment final.md is written.
+    const today = new Date().toISOString().split('T')[0]!
+    const safeRef = headRef.replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-{2,}/g, '-').slice(0, 60)
+    const expectedSessionId = `${today}-${safeRef}`
+    const expectedSessionDir = join(this.ocrDir, 'sessions', expectedSessionId)
+    try {
+      mkdirSync(expectedSessionDir, { recursive: true })
+      writeFileSync(
+        join(expectedSessionDir, 'remote-pr.json'),
+        JSON.stringify({ prUrl, owner, repo, prNumber, headRef }),
+      )
+      this.store.linkSession(prUrl, expectedSessionDir)
+      console.log(`[slack-bot] pre-created session: ${expectedSessionId}`)
+    } catch (err) {
+      console.warn(`[slack-bot] could not pre-create session dir:`, err)
+    }
 
     const commandContent = this.readCommandFile('review')
     const localCli = resolveLocalCli(this.ocrDir)
@@ -185,6 +298,12 @@ export class SlackBot {
       cwd: process.cwd(),
       mode: 'workflow',
     })
+
+    // Drain stdout/stderr — the Slack bot never reads Claude Code's stream-json
+    // output, so without this the OS pipe buffer (~64 KB) fills and the subprocess
+    // blocks mid-workflow (low-CPU hang, no session files created).
+    result.process.stdout?.resume()
+    result.process.stderr?.resume()
 
     // Wait for the child process to exit — completion DM comes via handleFinalMd
     await new Promise<void>((resolve, reject) => {
