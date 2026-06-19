@@ -110,12 +110,14 @@ When you ask an AI to "review my code," you get a single perspective — one pas
   - [Ephemeral Reviewers](#ephemeral-reviewers)
   - [Real-Time Progress](#real-time-progress)
   - [Address Feedback](#address-feedback)
+  - [Author Agent — Batch Fix](#author-agent--batch-fix)
   - [Session Notes & Chat](#session-notes--chat)
 - [Configuration](#configuration)
 - [Commands Reference](#commands-reference)
 - [Updating OCR](#updating-ocr)
 - [Supported AI Tools](#supported-ai-tools)
 - [Requirements](#requirements)
+- [Developer Setup](#developer-setup)
 
 ---
 
@@ -446,6 +448,21 @@ The `ocr progress` command shows a live terminal UI with phase tracking, elapsed
 
 After a review, use the `/ocr-address` command or the dashboard's "Address Feedback" button to spawn an AI agent that corroborates each finding against actual code, validates the suggestions, and implements the changes — with human approval at each step.
 
+### Author Agent — Batch Fix
+
+The Final Review tab renders the synthesized review exactly as it will appear on GitHub, with inline checkboxes injected at each finding in document order — blockers, should-fix items, and suggestions all stay in their natural positions rather than being consolidated at the top.
+
+**How it works:**
+
+1. **Tick findings to fix** — Check individual items or use the select-all toolbar. Each ticked item reveals an optional instruction textarea for per-finding notes to the Author Agent (e.g. "use the helper in utils.ts, keep the same API signature").
+2. **Open the Fix dialog** — Click "Fix N selected" to open the three-tab Author Agent dialog.
+   - **Agent tab** — Launches a Claude Code session with a structured prompt that includes each finding's original heading, file location, and your per-item notes. Copy the prompt to run in any AI assistant, or fire it directly from the dashboard.
+   - **Commit tab** — Commit the applied fixes with a pre-filled message.
+   - **Re-review tab** — Immediately trigger a new review round to verify the fixes.
+3. **Post-fix PR comments** — After the agent applies fixes, it posts one `gh pr comment` per fixed finding. Each comment uses the **exact heading from the original review** (e.g. `### 🚫 1. Document Validation Is Dead Code`) followed by 1–2 sentences describing what changed — so the reviewer can match each fix comment directly to the issue they raised.
+
+**Remote PR support:** For cross-repository review sessions where you are a collaborator, fixes are pushed directly to the PR branch and post-fix comments target the remote PR automatically. For read-only sessions, the agent produces a unified diff comment instead.
+
 ### Session Notes & Chat
 
 The dashboard supports session-level notes for tracking follow-up items and AI-powered chat on review rounds and map runs for asking follow-up questions about findings.
@@ -651,6 +668,49 @@ Sessions are gitignored by default.
 
 ---
 
+## Developer Setup
+
+To run from source after cloning the repo:
+
+**Prerequisites:** Node.js >= 22.5, pnpm >= 9, Git.
+
+```bash
+git clone https://github.com/sanidhyagupta-web/Hire-Code-Review-Bots.git
+cd Hire-Code-Review-Bots
+
+pnpm install                  # install all workspace dependencies
+
+pnpm nx run cli:build         # build the CLI
+pnpm nx run dashboard:build   # build the dashboard
+
+# Link the CLI globally so `ocr` resolves in any terminal
+npm install -g ./packages/cli
+
+# Use it in any project
+cd your-project
+ocr init
+ocr dashboard
+```
+
+**Active development** (hot-reload):
+
+```bash
+cd packages/dashboard
+pnpm dev          # starts Vite dev server + Node server concurrently
+```
+
+**Run tests:**
+
+```bash
+pnpm nx run-many -t test    # all packages
+pnpm nx run cli:test        # CLI only
+pnpm nx run-many -t lint    # lint check (also enforces module boundaries)
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution workflow.
+
+---
+
 ## License
 
 Apache-2.0
@@ -659,7 +719,6 @@ Apache-2.0
 
 ## Links
 
-- **GitHub**: [github.com/spencermarx/open-code-review](https://github.com/spencermarx/open-code-review)
+- **GitHub**: [github.com/sanidhyagupta-web/Hire-Code-Review-Bots](https://github.com/sanidhyagupta-web/Hire-Code-Review-Bots)
 - **npm (CLI)**: [@open-code-review/cli](https://www.npmjs.com/package/@open-code-review/cli)
 - **npm (Agents)**: [@open-code-review/agents](https://www.npmjs.com/package/@open-code-review/agents)
-# Hire-Code-Review-Bots

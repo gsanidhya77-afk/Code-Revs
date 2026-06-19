@@ -113,7 +113,7 @@ export function ReviewsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold">Reviews</h1>
         <div className="flex items-center gap-2">
           <button
@@ -150,7 +150,7 @@ export function ReviewsPage() {
       ) : (
         <div className="mt-6">
           {/* Filters */}
-          <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="mb-4 flex flex-wrap items-center gap-2 md:gap-3">
             <Filter className="h-4 w-4 text-zinc-400" />
             {showAll && (
               <div className="flex items-center gap-2">
@@ -188,8 +188,8 @@ export function ReviewsPage() {
               No reviews match your filters.
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800" style={{WebkitOverflowScrolling: 'touch'}}>
+              <table className="w-full min-w-[640px] text-sm">
                 <thead className="bg-zinc-50 dark:bg-zinc-900">
                   <tr>
                     <SortableHeader
@@ -243,7 +243,7 @@ export function ReviewsPage() {
                         className="cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                         onClick={() => navigate(`/sessions/${round.session_id}/reviews/${round.round_number}`)}
                       >
-                        <td className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+                        <td className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800 md:px-4">
                           <div className="flex items-center gap-2">
                             <FileText className="h-4 w-4 shrink-0 text-zinc-400" />
                             <span className="truncate text-zinc-900 dark:text-zinc-100" title={round.session_id}>
@@ -254,7 +254,7 @@ export function ReviewsPage() {
                         <td className="border-b border-zinc-200 px-4 py-2 text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
                           Round {round.round_number}
                         </td>
-                        <td className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+                        <td className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800 md:px-4">
                           {round.verdict ? (
                             <StatusBadge
                               variant={
@@ -270,7 +270,7 @@ export function ReviewsPage() {
                             <span className="text-xs text-zinc-400">Pending</span>
                           )}
                         </td>
-                        <td className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+                        <td className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800 md:px-4">
                           {round.blocker_count > 0 ? (
                             <span className="inline-flex items-center rounded-md border border-red-500/25 bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-400">
                               {round.blocker_count}
@@ -283,7 +283,7 @@ export function ReviewsPage() {
                           {reviewerCount}
                         </td>
                         <td
-                          className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800"
+                          className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800 md:px-4"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <select

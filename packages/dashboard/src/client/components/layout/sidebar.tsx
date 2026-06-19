@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Home, GitBranch, FileSearch, Terminal, Users, FolderGit2, Bot } from 'lucide-react'
+import { Home, GitBranch, FileSearch, Terminal, Users, FolderGit2, Bot, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { OcrLogoIcon } from '../ocr-logo'
 import { useSocket } from '../../providers/socket-provider'
@@ -24,11 +24,21 @@ const STATUS_COLORS: Record<string, string> = {
   disconnected: 'bg-red-500',
 }
 
-export function Sidebar() {
+type SidebarProps = {
+  open: boolean
+  onClose: () => void
+}
+
+export function Sidebar({ open, onClose }: SidebarProps) {
   const location = useLocation()
   const { status } = useSocket()
   const { runningCount } = useCommandState()
   const { data: config } = useIdeConfig()
+
+  // Close sidebar on route change (mobile)
+  useEffect(() => {
+    onClose()
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (config?.workspaceName) {
@@ -40,8 +50,20 @@ export function Sidebar() {
   }, [config?.workspaceName, config?.gitBranch])
 
   return (
-    <aside className="flex h-full w-56 flex-col border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="group/brand relative flex h-14 items-center gap-2.5 border-b border-zinc-200 px-4 dark:border-zinc-800">
+    <aside
+      className={cn(
+        // Base: full height, fixed width, glass on dark
+        'flex h-full w-64 flex-col border-r border-zinc-200 bg-zinc-50',
+        'dark:border-white/[0.06] dark:bg-[rgba(6,10,20,0.92)] dark:[backdrop-filter:blur(20px)]',
+        // Mobile: fixed overlay, slides in/out
+        'fixed inset-y-0 left-0 z-30 transition-transform duration-300 ease-in-out',
+        open ? 'translate-x-0' : '-translate-x-full',
+        // Desktop: always visible, relative in flow
+        'md:relative md:z-auto md:translate-x-0 md:transition-none',
+      )}
+    >
+      {/* Brand header */}
+      <div className="group/brand relative flex h-14 items-center gap-2.5 border-b border-zinc-200 px-4 dark:border-white/[0.06]">
         <OcrLogoIcon className="h-6 w-auto shrink-0 text-zinc-900 dark:text-zinc-100" />
         <div className="min-w-0 flex-1">
           <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
@@ -59,12 +81,19 @@ export function Sidebar() {
           )}
         </div>
 
-        {/* Hover tooltip with full workspace details */}
+        {/* Mobile close button */}
+        <button
+          onClick={onClose}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100 md:hidden"
+          aria-label="Close sidebar"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        {/* Desktop hover tooltip with full workspace details */}
         {config?.workspaceName && (
-          <div className="pointer-events-none absolute left-full top-2 z-50 ml-2 min-w-[280px] max-w-sm opacity-0 transition-opacity delay-300 group-hover/brand:opacity-100">
-            {/* Arrow */}
+          <div className="pointer-events-none absolute left-full top-2 z-50 ml-2 hidden min-w-[280px] max-w-xs opacity-0 transition-opacity delay-300 group-hover/brand:opacity-100 md:block">
             <div className="absolute -left-1 top-3 h-2 w-2 rotate-45 bg-zinc-900 dark:bg-zinc-700" />
-            {/* Content */}
             <div className="relative rounded-lg bg-zinc-900 px-3 py-2 text-xs shadow-lg dark:bg-zinc-700">
               <div className="font-medium text-white">{config.workspaceName}</div>
               {config.gitBranch && (
@@ -80,7 +109,8 @@ export function Sidebar() {
         )}
       </div>
 
-      <nav className="flex-1 space-y-1 p-2">
+      {/* Nav */}
+      <nav className="flex-1 space-y-1 overflow-y-auto p-2">
         {NAV_ITEMS.map(({ to, label, icon: Icon }) => {
           const active =
             to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
@@ -91,11 +121,11 @@ export function Sidebar() {
               className={cn(
                 'flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
                 active
-                  ? 'bg-zinc-200 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
-                  : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100',
+                  ? 'bg-zinc-200 font-medium text-zinc-900 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border dark:border-emerald-500/20 dark:[box-shadow:0_0_12px_rgba(34,197,94,0.15)]'
+                  : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-100',
               )}
             >
-              <Icon className="h-4 w-4" />
+              <Icon className="h-4 w-4 shrink-0" />
               {label}
               {to === '/commands' && runningCount > 0 && (
                 <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-indigo-500 px-1.5 text-[10px] font-semibold text-white">
@@ -107,7 +137,8 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
+      {/* Status footer */}
+      <div className="border-t border-zinc-200 p-3 dark:border-white/[0.06]">
         <div
           role="status"
           aria-label={`Connection status: ${status}`}

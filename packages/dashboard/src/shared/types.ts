@@ -23,7 +23,7 @@ export type RoundTriage = 'needs_review' | 'in_progress' | 'changes_made' | 'ack
 export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info'
 export type NoteTargetType = 'session' | 'round' | 'finding' | 'run' | 'section' | 'file'
 export type ChatTargetType = 'map_run' | 'review_round'
-export type PostReviewStep = 'idle' | 'checking' | 'ready' | 'generating' | 'preview' | 'posting' | 'posted' | 'error'
+export type PostReviewStep = 'idle' | 'checking' | 'ready' | 'generating' | 'preview' | 'posting' | 'posted' | 'error' | 'url-input'
 
 // ── Reviewers Meta (structured reviewer catalog for dashboard) ──
 

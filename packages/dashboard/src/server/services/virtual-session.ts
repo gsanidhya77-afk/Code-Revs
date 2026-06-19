@@ -54,6 +54,20 @@ export function createVirtualSession(
   writeFileSync(contextPath, contextMd, 'utf-8')
   writeFileSync(diffPath, diff, 'utf-8')
 
+  // Write structured metadata so the post-to-GitHub flow can identify this
+  // session as a remote PR and use the correct URL-based gh command.
+  writeFileSync(
+    join(sessionDir, 'remote-pr.json'),
+    JSON.stringify({
+      prUrl: meta.url,
+      owner: meta.owner,
+      repo: meta.repo,
+      prNumber: meta.prNumber,
+      headRef: meta.headRef,
+    }),
+    'utf-8',
+  )
+
   // Write a minimal requirements.md from the PR description
   if (meta.body.trim()) {
     writeFileSync(

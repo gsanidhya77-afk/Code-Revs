@@ -19,12 +19,11 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
     "paths": {
-      "@open-code-review/cli": ["packages/cli/src/index.ts"],
-      "@open-code-review/agents": ["packages/agents"],
-      "@open-code-review/dashboard": ["packages/dashboard/src/server/index.ts"],
-      "@open-code-review/platform": ["packages/shared/platform/src/index.ts"]
+      "@open-code-review/cli": ["./packages/cli/src/index.ts"],
+      "@open-code-review/agents": ["./packages/agents"],
+      "@open-code-review/dashboard": ["./packages/dashboard/src/server/index.ts"],
+      "@open-code-review/platform": ["./packages/shared/platform/src/index.ts"]
     }
   },
   "exclude": ["node_modules", "dist"]

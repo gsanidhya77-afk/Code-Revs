@@ -9,6 +9,7 @@
  * Output: NDJSON with stream_event / content_block_delta / assistant message types.
  */
 
+import { createWriteStream } from 'node:fs'
 import { execBinary, spawnBinary } from '@open-code-review/platform'
 import type {
   AiCliAdapter,
@@ -18,7 +19,7 @@ import type {
   SpawnOptions,
   SpawnResult,
 } from './types.js'
-import { extractAssistantText, buildFileStdio, closeFileStdio, deliverPrompt, assertNonEmptyPrompt } from './helpers.js'
+import { extractAssistantText, deliverPrompt, assertNonEmptyPrompt } from './helpers.js'
 import { cleanEnv } from '../../socket/env.js'
 import {
   buildResumeArgs as buildResumeArgsShared,
@@ -103,43 +104,53 @@ export class ClaudeCodeAdapter implements AiCliAdapter {
       flags.push('--model', opts.model)
     }
 
-    // File-stdio (root-cause wedge fix): in workflow mode with a per-execution
-    // log file, stdout+stderr go to that FILE rather than OS pipes, so a leaked
-    // grandchild inheriting fd 1/2 holds no pipe whose EOF the dashboard waits
-    // on — `proc.on('close')` fires on the direct child's exit. stdin stays a
-    // pipe to deliver the prompt. Shared helper keeps both adapters in lockstep.
-    const { stdio, logFd, logPath } = buildFileStdio(
-      isWorkflow ? opts.logFile : undefined,
-    )
-
-    // Spawn claude directly with stdin pipe (no shell needed). Merge any
-    // caller-supplied env vars (e.g. OCR_DASHBOARD_EXECUTION_UID for the
-    // late-linking workflow_id flow) on top of the cleaned baseline so
-    // child `ocr` invocations inherit the dashboard's execution context.
+    // On Windows, `detached: true` causes cmd.exe (cross-spawn's .cmd shim)
+    // to run with DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP. The net effect
+    // is that claude.exe (the grandchild launched by claude.cmd) can end up
+    // with a fresh console handle as its stdin instead of inheriting our pipe,
+    // which makes claude.exe report "Error: Input must be provided either
+    // through stdin or as a prompt argument when using --print".
+    //
+    // Fix: don't use detached on Windows. We still call proc.unref() so the
+    // dashboard's event loop is not held open by a running child — unref() is
+    // orthogonal to detached and works on both platforms.
+    //
+    // On non-Windows, detached keeps the original behaviour: child is made
+    // leader of a new process group so the command-runner can reap the tree.
+    const isWindows = process.platform === 'win32'
     const proc = spawnBinary('claude', flags, {
       cwd: opts.cwd,
       env: { ...cleanEnv(), ...(opts.env ?? {}) },
-      detached: isWorkflow,
-      stdio,
+      detached: isWorkflow && !isWindows,
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
 
-    // The child has its own dup of the log fd; close the parent's copy.
-    closeFileStdio(logFd)
+    // When a log file is requested, pipe stdout+stderr to it from the parent.
+    // Pass { end: false } so the first stream to close doesn't end the log
+    // WriteStream before the second stream has written its data — both stdout
+    // and stderr share the same WriteStream.
+    const logPath = isWorkflow && opts.logFile ? opts.logFile : undefined
+    if (logPath) {
+      const logStream = createWriteStream(logPath, { flags: 'a' })
+      proc.stdout?.pipe(logStream, { end: false })
+      proc.stderr?.pipe(logStream, { end: false })
+      let endedStreams = 0
+      const onEnd = () => { if (++endedStreams >= 2) logStream.end() }
+      proc.stdout?.on('end', onEnd)
+      proc.stderr?.on('end', onEnd)
+    }
 
-    // Detached workflows lead their own process group (so the command-runner
-    // can reap the whole tree) and are unref'd so the dashboard's event loop is
-    // never held open by a wedged child — finalization is driven by the vendor
-    // `result` event + watchdog, not by the parent waiting on the child handle.
-    if (isWorkflow) proc.unref()
-
-    // Prompt over stdin via the shared helper — its stdin error guard is
-    // load-bearing: a bare write here was an unhandled-EPIPE crash vector
-    // if the child died before draining (issue #43 review).
+    // Deliver prompt first, then unref — ensures the stdin write is queued
+    // before the event loop reference to the child is dropped.
     deliverPrompt(proc, opts.prompt)
+
+    // unref() lets the dashboard's event loop exit even if the child is still
+    // running. Finalization is driven by the vendor `result` event + watchdog.
+    if (isWorkflow) proc.unref()
 
     return {
       process: proc,
-      detached: isWorkflow,
+      detached: isWorkflow && !isWindows,
       ...(logPath ? { logPath } : {}),
     }
   }

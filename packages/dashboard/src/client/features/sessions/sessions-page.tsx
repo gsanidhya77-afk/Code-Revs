@@ -21,7 +21,7 @@ export function SessionsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Sessions</h1>
+        <h1 className="font-mono text-xl font-semibold md:text-2xl">Sessions</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           All code review and map sessions.
         </p>

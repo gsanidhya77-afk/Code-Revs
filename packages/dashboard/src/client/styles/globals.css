@@ -1,14 +1,21 @@
 @import "tailwindcss";
 @import "./hljs.css";
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+  --font-sans: "Fira Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
     "Segoe UI Symbol", "Noto Color Emoji";
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
     "Courier New", monospace;
   --radius: 0.5rem;
+  --color-ocr-bg: #080f1a;
+  --color-ocr-surface: rgba(15, 23, 42, 0.85);
+  --color-ocr-glass: rgba(30, 41, 59, 0.6);
+  --color-ocr-border: rgba(255, 255, 255, 0.08);
+  --color-ocr-accent: #22c55e;
+  --color-ocr-cyan: #22d3ee;
 }
 
 @layer base {
@@ -37,6 +44,86 @@
 
   .dark :focus-visible {
     outline-color: theme(--color-blue-400);
+  }
+}
+
+/* ── Glass card utility ── */
+@layer components {
+  /* Light mode: clean white card */
+  .glass-card {
+    background: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  }
+
+  /* Dark mode: frosted glass */
+  .dark .glass-card {
+    background: rgba(15, 23, 42, 0.72) !important;
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    border-color: rgba(255, 255, 255, 0.07) !important;
+    box-shadow:
+      0 4px 24px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .glass-card-hover {
+    transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease, background 220ms ease;
+    transform-style: preserve-3d;
+    perspective: 800px;
+    cursor: pointer;
+  }
+
+  /* Light mode hover */
+  .glass-card-hover:hover {
+    transform: translateY(-5px) rotateX(3deg) scale(1.01);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.14);
+  }
+
+  /* Dark mode hover */
+  .dark .glass-card-hover:hover {
+    transform: translateY(-5px) rotateX(3deg) scale(1.01);
+    background: rgba(20, 32, 58, 0.88) !important;
+    border-color: rgba(34, 197, 94, 0.28) !important;
+    box-shadow:
+      0 20px 48px rgba(0, 0, 0, 0.55),
+      0 0 24px rgba(34, 197, 94, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  }
+
+  /* Accent glow for active/CTA elements */
+  .glow-accent {
+    box-shadow: 0 0 16px rgba(34, 197, 94, 0.35), 0 0 40px rgba(34, 197, 94, 0.12);
+  }
+
+  /* Subtle cyan glow for info elements */
+  .glow-cyan {
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.3), 0 0 32px rgba(34, 211, 238, 0.08);
+  }
+
+  /* App background — light stays white, dark gets deep navy mesh */
+  .ocr-bg {
+    background-color: #ffffff;
+  }
+
+  .dark .ocr-bg {
+    background-color: #080f1a;
+    background-image:
+      linear-gradient(rgba(34, 197, 94, 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34, 197, 94, 0.018) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .dark .ocr-sidebar {
+    background-color: rgba(6, 10, 20, 0.88);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+  }
+
+  .dark .ocr-header {
+    background-color: rgba(6, 10, 20, 0.75);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
   }
 }
 

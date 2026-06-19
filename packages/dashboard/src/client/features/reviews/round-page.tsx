@@ -15,6 +15,7 @@ import { ChatPanel } from '../chat/components/chat-panel'
 import { PostReviewDialog } from './components/post-review-dialog'
 import { AddressFeedbackPopover } from './components/address-feedback-popover'
 import { TerminalHandoffPanel } from '../sessions/components/terminal-handoff-panel'
+import { FinalReviewWithFix } from './components/final-review-with-fix'
 
 const ROUND_STATUS_OPTIONS: { value: RoundTriage; label: string }[] = [
   { value: 'needs_review', label: 'Needs Review' },
@@ -191,7 +192,12 @@ export function RoundPage() {
         <h2 className="mb-4 text-sm font-medium text-zinc-900 dark:text-zinc-100">
           Findings{findings ? ` (${findings.length})` : ''}
         </h2>
-        <FindingsTable findings={findings ?? []} isLoading={findingsLoading} />
+        <FindingsTable
+          findings={findings ?? []}
+          isLoading={findingsLoading}
+          sessionId={sessionId}
+          roundNumber={roundNumber}
+        />
       </div>
 
       {/* Discourse Section */}
@@ -222,13 +228,17 @@ export function RoundPage() {
         </div>
       )}
 
-      {/* Final Review Content */}
+      {/* Final Review Content — with selectable Blockers / Should Fix items */}
       {finalArtifact && (
         <div className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
           <h2 className="mb-4 text-sm font-medium text-zinc-900 dark:text-zinc-100">
             Final Review
           </h2>
-          <MarkdownRenderer content={finalArtifact.content} />
+          <FinalReviewWithFix
+            content={finalArtifact.content}
+            sessionId={sessionId ?? ''}
+            roundNumber={roundNumber}
+          />
         </div>
       )}
 

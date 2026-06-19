@@ -22,7 +22,9 @@ type UsePostReviewReturn = {
   generate: (sessionId: string, roundNumber: number) => void
   cancelGeneration: (sessionId: string, roundNumber: number) => void
   saveDraft: (sessionId: string, roundNumber: number, content: string) => void
-  submitToGitHub: (prNumber: number, content: string) => void
+  submitToGitHub: (prNumber: number, content: string, prUrl?: string | null) => void
+  applyManualPrUrl: (url: string) => boolean
+  savePrUrl: (sessionId: string, prUrl: string) => void
   reset: () => void
   setStep: (step: PostReviewStep) => void
 }
@@ -64,6 +66,9 @@ export function usePostReview(): UsePostReviewReturn {
       setCheckResult(data)
       if (data.authenticated && data.prNumber) {
         setStep('ready')
+      } else if (data.authenticated && !data.prNumber) {
+        // Authenticated but no PR found locally — show clean URL input (no error)
+        setStep('url-input')
       } else {
         setError(data.error ?? 'GitHub check failed')
         setStep('error')
@@ -207,13 +212,39 @@ export function usePostReview(): UsePostReviewReturn {
   )
 
   const submitToGitHub = useCallback(
-    (prNumber: number, content: string) => {
+    (prNumber: number, content: string, prUrl?: string | null) => {
       if (!socket) return
       setStep('posting')
       setError(null)
-      socket.emit('post:submit', { prNumber, content })
+      socket.emit('post:submit', { prNumber, content, prUrl: prUrl ?? null })
     },
     [socket],
+  )
+
+  const savePrUrl = useCallback(
+    (sessionId: string, prUrl: string) => {
+      if (!socket) return
+      socket.emit('post:save-pr-url', { sessionId, prUrl })
+    },
+    [socket],
+  )
+
+  const applyManualPrUrl = useCallback(
+    (url: string): boolean => {
+      const m = url.trim().match(/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/)
+      if (!m || !m[1]) return false
+      const prNumber = parseInt(m[1], 10)
+      setCheckResult(prev => ({
+        authenticated: true,
+        prNumber,
+        prUrl: url.trim(),
+        branch: prev?.branch ?? null,
+      }))
+      setError(null)
+      setStep('ready')
+      return true
+    },
+    [],
   )
 
   const reset = useCallback(() => {
@@ -243,6 +274,8 @@ export function usePostReview(): UsePostReviewReturn {
     cancelGeneration,
     saveDraft,
     submitToGitHub,
+    applyManualPrUrl,
+    savePrUrl,
     reset,
     setStep,
   }
