@@ -102,8 +102,11 @@ function buildBatchPrompt(
     }
   }
 
-  // Post-fix comment section — skip for non-collaborator remote (agent can't push code there anyway)
-  const canPostFix = !remotePr || remotePr.isCollaborator
+  // Commit section — agent should not commit; Tab 2 (Commit & Push) handles this so there's no conflict
+  const commitSection = ''
+
+  // Post-fix comment section — only for remote collaborator sessions (where the agent already pushed)
+  const canPostFix = remotePr?.isCollaborator === true
   const ghCommentTarget = remotePr?.prNumber != null
     ? `${remotePr.prNumber} --repo ${remotePr.owner}/${remotePr.repo}`
     : '$(gh pr view --json number --jq .number 2>/dev/null)'
@@ -131,7 +134,7 @@ INSTRUCTIONS:
 2. Address them in the order listed — skip any already resolved
 3. Do not refactor surrounding code or change unrelated logic
 4. Do NOT add comments explaining the changes
-5. Report which files you changed and which findings each change addresses${postFixSection}`.trim()
+5. Report which files you changed and which findings each change addresses${postFixSection}${commitSection}`.trim()
 }
 
 function DiffView({ diff }: { diff: string }) {

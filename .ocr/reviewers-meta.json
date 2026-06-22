@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-18T11:37:22.207Z",
+  "generated_at": "2026-06-21T17:27:00.034Z",
   "reviewers": [
     {
       "id": "accessibility",
@@ -302,7 +302,7 @@
       "focus_areas": [
         "Algorithmic Complexity"
       ],
-      "is_default": false,
+      "is_default": true,
       "is_builtin": true
     },
     {
@@ -396,7 +396,7 @@
       "icon": "shield-alert",
       "description": "Security Engineer conducting a code review. You have deep expertise in application security, threat modeling, and secure coding practices.",
       "focus_areas": [],
-      "is_default": true,
+      "is_default": false,
       "is_builtin": true
     },
     {

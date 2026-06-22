@@ -26,7 +26,8 @@ export class SlackReviewStore {
   // keyed by session directory (absolute path) — set after review starts
   private bySessionDir = new Map<string, TrackedReview>()
 
-  private static normalise(prUrl: string): string {
+  private static normalise(prUrl: string | undefined): string {
+    if (!prUrl) return ''
     return prUrl.toLowerCase().replace(/\/+$/, '')
   }
 

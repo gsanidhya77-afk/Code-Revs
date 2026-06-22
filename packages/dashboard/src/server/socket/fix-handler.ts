@@ -158,7 +158,25 @@ export function registerFixHandlers(
         'git', ['status', '--porcelain'],
         { cwd: projectRoot, env, encoding: 'utf-8' },
       )
+
       if (!statusOut.trim()) {
+        // No uncommitted changes — check if there are unpushed commits to push
+        const { stdout: aheadOut } = await execBinaryAsync(
+          'git', ['rev-list', '--count', '@{u}..HEAD'],
+          { cwd: projectRoot, env, encoding: 'utf-8' },
+        ).catch(() => ({ stdout: '0' }))
+
+        if (parseInt(aheadOut.trim(), 10) > 0) {
+          // Agent already committed; just push
+          await execBinaryAsync('git', ['push'], { cwd: projectRoot, env, encoding: 'utf-8' })
+          const { stdout: hashOut } = await execBinaryAsync(
+            'git', ['rev-parse', '--short', 'HEAD'],
+            { cwd: projectRoot, env, encoding: 'utf-8' },
+          )
+          socket.emit('fix:commit-result', { success: true, commitHash: hashOut.trim() })
+          return
+        }
+
         socket.emit('fix:commit-result', {
           success: false,
           error: 'No changes to commit. Run the Author Agent first to apply the fix.',

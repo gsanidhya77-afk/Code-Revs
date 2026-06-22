@@ -1,5 +1,5 @@
 ---
-description: Address code review feedback — corroborate, validate, and implement changes from a review's final.md.
+description: Address code review feedback — select findings, corroborate, implement changes from a review's final.md, and commit on the same branch.
 ---
 
 # OCR: Address

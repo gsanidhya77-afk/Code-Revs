@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import { Wrench } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import { MarkdownRenderer } from '../../../components/markdown/markdown-renderer'
@@ -15,23 +15,12 @@ type Segment =
 
 // ── Segmenter ──────────────────────────────────────────────────────────────
 
-/**
- * Split the final.md markdown into alternating "plain markdown" and "checkboxable item"
- * segments, preserving document order exactly as it will appear on GitHub.
- *
- * Checkboxable lines:
- *   Blockers    — "### 🚫 N. Title"
- *   Should Fix  — "### N. Title"  (no emoji, digit-dot prefix)
- *   Suggestions — "- "quoted"" bullet lines
- *
- * Everything else (headers, tables, prose, code blocks) stays in markdown segments.
- */
 function buildSegments(markdown: string): Segment[] {
   const lines = markdown.split('\n')
   const segments: Segment[] = []
   let mdBuf: string[] = []
-  let segId = 0   // shared across md + item segments (unique key per segment)
-  let itemId = 0  // sequential counter for checkboxable items only
+  let segId = 0
+  let itemId = 0
 
   type ActiveItem = { kind: SectionKind; heading: string; bodyLines: string[] }
   let current: ActiveItem | null = null
@@ -61,8 +50,6 @@ function buildSegments(markdown: string): Segment[] {
     const isBlockerH   = /^###\s*[\u{1F6AB}]\s*\d+\./u.test(line)
     const isShouldFixH = !isBlockerH && /^###\s*\d+\.\s/.test(line)
     const isSuggBullet = /^- "/.test(line)
-    // ## section breaks always close any active item (prevents ## Should Fix
-    // from accidentally ending up in a blocker's body content)
     const isNewSection = /^## /.test(line)
 
     if (isBlockerH || isShouldFixH) {
@@ -129,6 +116,18 @@ function segmentToFinding(seg: Segment & { type: 'item' }): Finding {
   } as unknown as Finding
 }
 
+const SEVERITY_BADGE: Record<SectionKind, string> = {
+  blocker:    'bg-red-500/15 text-red-700 dark:text-red-400',
+  'should-fix': 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  suggestion: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',
+}
+
+const SEVERITY_LABEL: Record<SectionKind, string> = {
+  blocker:    'Blocker',
+  'should-fix': 'Should Fix',
+  suggestion: 'Suggestion',
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function FinalReviewWithFix({
@@ -140,9 +139,8 @@ export function FinalReviewWithFix({
   sessionId: string
   roundNumber: number
 }) {
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const [perNotes, setPerNotes] = useState<Record<number, string>>({})
-  const [batchOpen, setBatchOpen] = useState(false)
+  const [activeFindings, setActiveFindings] = useState<Finding[]>([])
+  const [dialogOpen, setDialogOpen] = useState(false)
 
   const segments = useMemo(() => {
     try {
@@ -157,119 +155,99 @@ export function FinalReviewWithFix({
     [segments],
   )
 
-  const totalFixable = items.length
+  const allFindings = useMemo(() => items.map(segmentToFinding), [items])
 
-  const toggle = useCallback((id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
+  function openSingle(seg: Segment & { type: 'item' }) {
+    setActiveFindings([segmentToFinding(seg)])
+    setDialogOpen(true)
+  }
 
-  const toggleAll = useCallback(() => {
-    setSelectedIds((prev) =>
-      prev.size === totalFixable && totalFixable > 0
-        ? new Set<number>()
-        : new Set<number>(items.map((f) => f.id)),
-    )
-  }, [items, totalFixable])
-
-  const selectedFindings = useMemo(
-    () => items.filter((f) => selectedIds.has(f.id)).map(segmentToFinding),
-    [items, selectedIds],
-  )
+  function openAll() {
+    setActiveFindings(allFindings)
+    setDialogOpen(true)
+  }
 
   return (
     <div>
-      {/* Select-all toolbar — only shown when there are fixable items */}
-      {totalFixable > 0 && (
-        <div className="mb-4 flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50/60 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
-          <div className="flex items-center gap-3">
-            <input
-              type="checkbox"
-              checked={selectedIds.size === totalFixable && totalFixable > 0}
-              ref={(el) => {
-                if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < totalFixable
-              }}
-              onChange={toggleAll}
-              aria-label="Select all fixable items"
-              className="h-3.5 w-3.5 cursor-pointer rounded border-zinc-300 accent-emerald-600 dark:border-zinc-600"
-            />
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              {totalFixable} fixable item{totalFixable !== 1 ? 's' : ''}
-            </span>
-          </div>
-          {selectedIds.size > 0 && (
-            <button
-              type="button"
-              onClick={() => setBatchOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 cursor-pointer"
-            >
-              <Wrench className="h-3.5 w-3.5" />
-              Fix {selectedIds.size} selected
-            </button>
-          )}
+      {/* Sticky toolbar — Fix All button */}
+      {items.length > 0 && (
+        <div className="sticky top-0 z-10 mb-4 flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50/95 px-4 py-2.5 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/95">
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            {items.length} fixable item{items.length !== 1 ? 's' : ''}
+          </span>
+          <button
+            type="button"
+            onClick={openAll}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 cursor-pointer"
+          >
+            <Wrench className="h-3.5 w-3.5" />
+            Fix All ({items.length})
+          </button>
         </div>
       )}
 
-      {/* Document — full markdown in order, checkboxes injected at item lines */}
+      {/* Document — markdown rendered in order; each fixable item gets an inline Fix button */}
       <div>
         {segments.map((seg) => {
           if (seg.type === 'md') {
             return <MarkdownRenderer key={seg.id} content={seg.content} />
           }
 
-          const selected = selectedIds.has(seg.id)
           const isSugg = seg.kind === 'suggestion'
 
           return (
             <div
               key={seg.id}
               className={cn(
-                'flex items-start gap-2 rounded-sm px-1 -mx-1 transition-colors',
-                selected ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : '',
-                isSugg ? 'my-0.5' : '',
+                'group relative rounded-md border border-transparent px-3 py-2 -mx-3 transition-colors hover:border-zinc-200 hover:bg-zinc-50/60 dark:hover:border-zinc-800 dark:hover:bg-zinc-900/40',
+                isSugg ? 'my-0.5' : 'my-1',
               )}
             >
-              <input
-                type="checkbox"
-                checked={selected}
-                onChange={() => toggle(seg.id)}
-                className={cn(
-                  'h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-zinc-300 accent-emerald-600 dark:border-zinc-600',
-                  isSugg ? 'mt-[4px]' : 'mt-[5px]',
-                )}
-                aria-label="Select for fix"
-              />
-              <div className="min-w-0 flex-1">
-                <MarkdownRenderer content={seg.headingLine} />
-                {seg.bodyContent.trim() && (
-                  <MarkdownRenderer content={seg.bodyContent} />
-                )}
-                {selected && (
-                  <textarea
-                    value={perNotes[seg.id] ?? ''}
-                    onChange={(e) => setPerNotes((prev) => ({ ...prev, [seg.id]: e.target.value }))}
-                    placeholder="Instructions for Author Agent (optional) — e.g. use the helper in utils.ts, keep the same API signature…"
-                    rows={2}
-                    className="mt-2 w-full resize-none rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-xs placeholder:text-zinc-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-zinc-200 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
-                  />
-                )}
+              {/* Fix button — always visible on the right of the heading row */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <MarkdownRenderer content={seg.headingLine} />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openSingle(seg)}
+                  className={cn(
+                    'mt-1 shrink-0 inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer',
+                    seg.kind === 'blocker'
+                      ? 'bg-red-600 text-white hover:bg-red-700'
+                      : seg.kind === 'should-fix'
+                        ? 'bg-amber-500 text-white hover:bg-amber-600'
+                        : 'bg-zinc-600 text-white hover:bg-zinc-700',
+                  )}
+                  title={`Fix: ${SEVERITY_LABEL[seg.kind]}`}
+                >
+                  <Wrench className="h-3 w-3" />
+                  Fix
+                </button>
               </div>
+
+              {/* Severity badge */}
+              <span className={cn(
+                'mb-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                SEVERITY_BADGE[seg.kind],
+              )}>
+                {SEVERITY_LABEL[seg.kind]}
+              </span>
+
+              {seg.bodyContent.trim() && (
+                <MarkdownRenderer content={seg.bodyContent} />
+              )}
             </div>
           )
         })}
       </div>
 
-      {batchOpen && selectedFindings.length > 0 && (
+      {dialogOpen && activeFindings.length > 0 && (
         <BatchFixDialog
-          findings={selectedFindings}
+          findings={activeFindings}
           sessionId={sessionId}
           roundNumber={roundNumber}
-          initialPerNotes={perNotes}
-          onClose={() => setBatchOpen(false)}
+          onClose={() => setDialogOpen(false)}
         />
       )}
     </div>

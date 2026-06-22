@@ -449,10 +449,12 @@ See `references/context-discovery.md` for detailed algorithm.
    **Auto-detection** (adds reviewers beyond config):
    | Change Type | Additional Reviewers |
    |-------------|---------------------|
-   | Auth/Security changes | + 1x Security |
-   | API changes | + 1x Security |
    | Logic changes | + 1x Testing (if not in config) |
-   | User says "add security" | + 1x Security |
+   | User explicitly says "add security" | + 1x Security |
+
+   > **No implicit Security injection**: Security is NOT auto-added for API or
+   > auth changes. Add it explicitly via `--team` or `--reviewer` when you want
+   > it. Auto-adding it silently inflates every API PR's cost and reviewer count.
 
 5. **Handle `--team` override** (if provided):
 

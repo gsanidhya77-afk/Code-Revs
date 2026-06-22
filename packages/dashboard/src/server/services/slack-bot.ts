@@ -156,7 +156,7 @@ export class SlackBot {
 
     if (!entry) {
       const meta = readRemotePrJson(sessionDir)
-      if (meta) {
+      if (meta?.prUrl) {
         entry = this.store.get(meta.prUrl)
         if (entry) this.store.linkSession(meta.prUrl, sessionDir)
       }
