@@ -21,14 +21,63 @@ type RemotePrMeta = {
   headRef?: string
 }
 
+/**
+ * Read remote PR metadata for a session, handling multiple sources and field-name
+ * conventions that exist across the dashboard and CLI-agent review paths.
+ *
+ * Priority:
+ *   1. remote-pr.json (dashboard format: prUrl/owner/repo/prNumber/headRef)
+ *   2. remote-pr.json (agent format:     url/number/repo/branch  or  repo/pr_number/head_ref)
+ *   3. context.md     (**Target** / **Branch** lines — always written by agent reviews)
+ */
 function readRemotePr(ocrDir: string, sessionId: string): RemotePrMeta | null {
   const p = join(ocrDir, 'sessions', sessionId, 'remote-pr.json')
-  if (!existsSync(p)) return null
-  try {
-    return JSON.parse(readFileSync(p, 'utf-8')) as RemotePrMeta
-  } catch {
-    return null
+  if (existsSync(p)) {
+    try {
+      const raw = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>
+
+      const prUrl = (raw.prUrl ?? raw.url) as string | undefined
+      const prNumber = (raw.prNumber ?? raw.number ?? raw.pr_number) as number | undefined
+      const headRef = (raw.headRef ?? raw.branch ?? raw.head_ref) as string | undefined
+      const rawRepo = raw.repo as string | undefined
+
+      let owner = raw.owner as string | undefined
+      let repo = rawRepo
+      if (!owner && rawRepo?.includes('/')) {
+        const idx = rawRepo.indexOf('/')
+        owner = rawRepo.slice(0, idx)
+        repo = rawRepo.slice(idx + 1)
+      }
+
+      if (owner && repo && prNumber != null) {
+        const resolvedUrl = prUrl ?? `https://github.com/${owner}/${repo}/pull/${prNumber}`
+        return { prUrl: resolvedUrl, owner, repo, prNumber, headRef }
+      }
+    } catch {
+      // fall through to context.md
+    }
   }
+
+  // Fall back: parse **Target** / **Branch** from context.md (written by agent reviews)
+  const ctxPath = join(ocrDir, 'sessions', sessionId, 'context.md')
+  if (existsSync(ctxPath)) {
+    try {
+      const ctx = readFileSync(ctxPath, 'utf-8')
+      const urlMatch = /\*\*Target\*\*:\s*(https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+))/m.exec(ctx)
+      if (urlMatch) {
+        const [, prUrl, owner, repo, prNumberStr] = urlMatch
+        const branchMatch = /\*\*Branch\*\*:\s*(.+)/.exec(ctx)
+        const headRef = branchMatch
+          ? branchMatch[1].split(/\s*(?:→|->)\s*/)[0].trim() || undefined
+          : undefined
+        return { prUrl, owner, repo, prNumber: parseInt(prNumberStr, 10), headRef }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null
 }
 
 export function registerFixHandlers(
