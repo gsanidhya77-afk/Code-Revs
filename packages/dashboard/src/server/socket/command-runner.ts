@@ -95,7 +95,7 @@ const ALLOWED_COMMANDS = new Set([
 ])
 
 /** AI workflow commands — spawned via the AI CLI adapter strategy. */
-const AI_COMMANDS = new Set(['map', 'review', 'translate-review-to-single-human', 'address', 'create-reviewer', 'sync-reviewers'])
+const AI_COMMANDS = new Set(['map', 'review', 'translate-review-to-single-human', 'address', 'fix-remote', 'create-reviewer', 'sync-reviewers'])
 
 /**
  * Registers the `command:run` socket handler for a connected client.

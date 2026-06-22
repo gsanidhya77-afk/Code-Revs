@@ -223,9 +223,13 @@ export function BatchFixDialog({ findings, sessionId, roundNumber, initialPerNot
 
   function handleRunAgent() {
     const roundDir = `.ocr/sessions/${sessionId}/rounds/round-${roundNumber}`
-    socket?.emit('command:run', {
-      command: `ocr address ${roundDir}/final.md --requirements ${JSON.stringify(prompt)}`,
-    })
+    // Remote PR sessions use `fix-remote` so the gh-api instructions in the
+    // requirements are treated as authoritative (not silently demoted to "DATA"
+    // by the address.md command wrapper).
+    const command = isRemote
+      ? `ocr fix-remote --requirements ${JSON.stringify(prompt)}`
+      : `ocr address ${roundDir}/final.md --requirements ${JSON.stringify(prompt)}`
+    socket?.emit('command:run', { command })
     close()
     navigate('/commands')
   }
