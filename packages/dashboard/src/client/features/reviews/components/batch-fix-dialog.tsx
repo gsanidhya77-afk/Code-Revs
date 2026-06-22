@@ -382,38 +382,46 @@ export function BatchFixDialog({ findings, sessionId, roundNumber, initialPerNot
 
               {hasAiCli ? (
                 <>
-                  {/* Show remote PR mode badge */}
-                  {isRemote && sessionInfo && (
-                    <div className={cn(
-                      'flex items-start gap-2 rounded-md border px-3 py-2 text-xs',
-                      isCollaborator
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300'
-                        : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300',
-                    )}>
-                      <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>
-                        {isCollaborator
-                          ? `Collaborator access confirmed — agent will push fixes directly to \`${sessionInfo.headRef ?? 'PR branch'}\` on ${sessionInfo.owner}/${sessionInfo.repo}.`
-                          : `Read-only access — you are not a collaborator on ${sessionInfo.owner}/${sessionInfo.repo}. Agent will post suggested fixes as a PR comment instead.`}
-                      </span>
+                  {/* Loading state — wait for session info before allowing agent launch */}
+                  {sessionInfo === null ? (
+                    <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                      <span>Checking session type…</span>
                     </div>
+                  ) : (
+                    /* Show remote PR mode badge once session info is loaded */
+                    isRemote ? (
+                      <div className={cn(
+                        'flex items-start gap-2 rounded-md border px-3 py-2 text-xs',
+                        isCollaborator
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300'
+                          : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300',
+                      )}>
+                        <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          {isCollaborator
+                            ? `Collaborator access confirmed — agent will push fixes directly to \`${sessionInfo.headRef ?? 'PR branch'}\` on ${sessionInfo.owner}/${sessionInfo.repo}.`
+                            : `Read-only access — you are not a collaborator on ${sessionInfo.owner}/${sessionInfo.repo}. Agent will post suggested fixes as a PR comment instead.`}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                        <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          Runs a single AI agent with read/write access to fix all {findings.length}{' '}
+                          finding{findings.length === 1 ? '' : 's'} in one pass. Review the diff before committing.
+                        </span>
+                      </div>
+                    )
                   )}
-                  <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
-                    <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>
-                      Runs a single AI agent with read/write access to fix all {findings.length}{' '}
-                      finding{findings.length === 1 ? '' : 's'} in one pass.{' '}
-                      {!isRemote && 'Review the diff before committing.'}
-                    </span>
-                  </div>
                   <div className="flex gap-2">
                     {!confirming ? (
                       <button
                         onClick={() => setConfirming(true)}
-                        disabled={isRunning}
+                        disabled={isRunning || sessionInfo === null}
                         className={cn(
                           'flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 cursor-pointer',
-                          isRunning && 'cursor-not-allowed opacity-50',
+                          (isRunning || sessionInfo === null) && 'cursor-not-allowed opacity-50',
                         )}
                       >
                         <Play className="h-3.5 w-3.5" />
@@ -442,7 +450,9 @@ export function BatchFixDialog({ findings, sessionId, roundNumber, initialPerNot
                     </button>
                   </div>
                   <p className="text-center text-xs text-zinc-400 dark:text-zinc-500">
-                    Agent runs in Commands view — come back here to commit when done.
+                    {isRemote
+                      ? `Agent runs in Commands view — changes go directly to ${isCollaborator ? 'the PR branch' : 'a PR comment'}.`
+                      : 'Agent runs in Commands view — come back here to commit when done.'}
                   </p>
                 </>
               ) : (
