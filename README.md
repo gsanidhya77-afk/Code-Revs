@@ -64,6 +64,8 @@ When you ask an AI to "review my code," you get a single perspective — one pas
 - **Fully customizable teams** — Pick from 28 reviewer personas (including famous engineers like Martin Fowler, Kent Beck, and Sandi Metz), create your own persistent reviewers, or describe ephemeral one-off reviewers inline.
 - **Requirements-aware** — Pass in a spec, proposal, or acceptance criteria. Every reviewer evaluates the code against your stated requirements, not just general best practices.
 - **Project context** — OCR discovers your standards from `CLAUDE.md`, `.cursorrules`, OpenSpec configs, and other common patterns. Reviewers apply *your* conventions.
+- **Closes the loop automatically** — The Author Agent reads the finished review, corroborates each finding against actual code, implements the valid ones in parallel sub-agents, and commits the fixes to your branch — all without copy-pasting a single finding into a chat window.
+- **Trigger from Slack** — @mention the bot with a PR URL in any channel. It runs the full review in the background, DMs you when it's done, and posts the result directly to the GitHub PR — no dashboard access required.
 
 ```
                     ┌─────────────┐
@@ -112,6 +114,7 @@ When you ask an AI to "review my code," you get a single perspective — one pas
   - [Address Feedback](#address-feedback)
   - [Author Agent — Batch Fix](#author-agent--batch-fix)
   - [Session Notes & Chat](#session-notes--chat)
+- [Slack Bot](#slack-bot)
 - [Configuration](#configuration)
 - [Commands Reference](#commands-reference)
 - [Updating OCR](#updating-ocr)
@@ -446,7 +449,48 @@ The `ocr progress` command shows a live terminal UI with phase tracking, elapsed
 
 ### Address Feedback
 
-After a review, use the `/ocr-address` command or the dashboard's "Address Feedback" button to spawn an AI agent that corroborates each finding against actual code, validates the suggestions, and implements the changes — with human approval at each step.
+After a review, use the `/ocr-address` command or the dashboard's "Address Feedback" button to spawn an AI agent that corroborates each finding against actual code, validates the suggestions, and implements the changes.
+
+```
+/ocr-address                          # Auto-detect session, show selection list, commit after
+/ocr-address --items blockers         # Fix all blocker-severity findings
+/ocr-address --items 1,3,5            # Fix specific finding numbers
+/ocr-address --items 1-4,7            # Ranges and lists can be mixed
+/ocr-address --items all --no-commit  # Apply all fixes but skip the git commit
+```
+
+The agent follows an 8-step workflow:
+
+| Step | What happens |
+|------|-------------|
+| 1. Resolve inputs | Auto-detects or accepts explicit path to `final.md`; reads session context (`discovered-standards.md`, `context.md`) |
+| 2. Parse findings | Catalogs every feedback item with number, file, line, category (blocker / should-fix / suggestion), and reviewer persona |
+| 3. Select findings | Presents a numbered table; resolves your `--items` selection or prompts you to choose |
+| 4. Gather context | Reads every file referenced by the selected findings plus callers, types, and tests |
+| 5. Corroborate | Reads actual code at each location; classifies each finding as *Valid*, *Alternative Approach*, *Invalid*, or *Needs Clarification* — does not blindly accept feedback |
+| 6. Implement | Spawns sub-agents in parallel for independent items; groups dependent items; reviews combined changes for conflicts |
+| 7. Verify | Runs `tsc --noEmit` and `npm test`; fixes any failures before committing |
+| 8. Commit | Stages only modified files, creates a structured commit on the current branch |
+
+**The corroboration step is critical.** If a finding is based on a misunderstanding of the code, the agent declines it with evidence. If the suggested fix is suboptimal, it proposes a better alternative and implements that instead.
+
+**Commit format** (Step 8):
+
+```
+fix(review): address 3 findings from OCR session 2026-06-21-feat-auth
+
+Round 1 — items addressed:
+- [1] JWT secret read from process.env without fallback (src/auth/token.ts)
+- [2] Raw SQL string interpolation (src/db/query.ts)
+- [3] Missing input validation on email field (src/api/users.ts)
+
+Skipped (invalid/declined):
+- [4] Cache TTL should come from config — TTL is already read from config.yaml:L34
+
+Reviewed by: Open Code Review
+```
+
+The commit stays **local** — it is never pushed automatically. You control when to push to the remote PR.
 
 ### Author Agent — Batch Fix
 
@@ -466,6 +510,96 @@ The Final Review tab renders the synthesized review exactly as it will appear on
 ### Session Notes & Chat
 
 The dashboard supports session-level notes for tracking follow-up items and AI-powered chat on review rounds and map runs for asking follow-up questions about findings.
+
+---
+
+## Slack Bot
+
+OCR includes an optional Slack bot that lets anyone on your team trigger a PR review with a single @mention — no dashboard access required. The bot uses **Socket Mode** (a persistent WebSocket to Slack's servers), so no public URL or inbound firewall rule is needed on your machine.
+
+### What it does
+
+- **`@ocr-bot https://github.com/owner/repo/pull/123`** in any channel → review starts immediately
+- Posts a public acknowledgement in the channel so the whole team sees it
+- DMs the requester when the review starts (with team and start time)
+- DMs the requester again when the review completes (with duration and GitHub link)
+- **Duplicate detection** — if a second person requests the same PR while a review is already running, both users are DM'd: the new requester is told who already started it, and the original requester is told someone else also wants it
+- **Auto-posts the review to the GitHub PR** as a comment the moment it completes — no manual step needed
+
+### Setup
+
+**1. Create a Slack app**
+
+Go to [api.slack.com/apps](https://api.slack.com/apps), create a new app "From scratch", and:
+
+- Under **OAuth & Permissions → Bot Token Scopes**, add: `app_mentions:read`, `chat:write`, `im:write`
+- Under **Socket Mode**, enable Socket Mode and generate an **App-Level Token** (`xapp-...`) with scope `connections:write`
+- Under **Event Subscriptions → Subscribe to bot events**, add `app_mention`
+- Install the app to your workspace and copy the **Bot User OAuth Token** (`xoxb-...`)
+
+**2. Add credentials to `.ocr/config.yaml`**
+
+```yaml
+slack:
+  bot_token: "xoxb-your-bot-token"
+  app_token: "xapp-your-app-level-token"
+  default_team: "principal:2,security:1"   # optional — which reviewer personas to use
+```
+
+**3. Invite the bot to a channel**
+
+```
+/invite @ocr-bot
+```
+
+**4. Start the dashboard**
+
+```bash
+ocr dashboard
+```
+
+The bot connects automatically on startup. You'll see `Slack bot: connected (Socket Mode)` in the server logs. If the `slack:` block is missing or incomplete, the bot is silently skipped — it's fully optional.
+
+### Triggering a review
+
+Mention the bot in any channel it has been invited to:
+
+```
+@ocr-bot https://github.com/owner/repo/pull/123
+```
+
+The bot responds in the thread, DMs you, runs the full OCR review workflow in the background, and sends you a DM with the result and GitHub comment link when done.
+
+### How the bot tracks reviews
+
+When you trigger a review, the bot:
+
+1. Fetches the PR's branch name from GitHub (`gh pr view`)
+2. Pre-creates `.ocr/sessions/YYYY-MM-DD-branch-name/` and writes a `remote-pr.json` marker file inside it — this is how the bot later matches the session directory back to your Slack request
+3. Spawns Claude Code with the review prompt
+4. When `final.md` is written to the session directory, the filesystem watcher fires a callback into the bot's `handleFinalMd` method, which sends the DMs and posts to GitHub
+
+The commit the review produces stays on your branch — the bot does not push anything.
+
+### Duplicate request handling
+
+```
+User A: @ocr-bot https://github.com/org/repo/pull/42
+Bot → channel: "On it! Reviewing org/repo PR #42 now. I'll DM @UserA when done."
+Bot → UserA DM: "Review started…"
+
+[Review is running]
+
+User B: @ocr-bot https://github.com/org/repo/pull/42
+Bot → UserB DM: "PR #42 is already being reviewed — started by @UserA at 2:14 PM. You'll be notified when it completes."
+Bot → UserA DM: "@UserB also requested a review of org/repo PR #42. Your review is still running."
+```
+
+### What happens if the review fails
+
+If Claude Code exits without producing a `final.md` (crash, misconfiguration, etc.), the bot:
+- DMs you: "The review process exited without producing a result. Please check your AI CLI setup and try again."
+- Cleans up the in-memory tracking entry so no resources leak
 
 ---
 
@@ -522,6 +656,13 @@ github:
 # Dashboard IDE integration
 dashboard:
   ide: auto  # vscode | cursor | windsurf | jetbrains | sublime
+
+# Slack bot (optional) — enables @bot <pr-url> → review → DM workflow
+# Requires Socket Mode enabled in your Slack app settings.
+# slack:
+#   bot_token: "xoxb-..."   # Bot User OAuth Token
+#   app_token: "xapp-..."   # App-Level Token (for Socket Mode)
+#   default_team: "principal:2,security:1"   # reviewer team for Slack-triggered reviews
 ```
 
 Team composition can also be changed per-review via `--team` (explicit roster) or `--reviewer` (ephemeral reviewers), or via natural language: "use 3 principal reviewers and add security."
@@ -546,7 +687,10 @@ Team composition can also be changed per-review via `--team` (explicit roster) o
 | `/ocr-reviewers` | List available reviewer personas |
 | `/ocr-history` | List past review sessions |
 | `/ocr-show [session]` | Display a specific past review |
-| `/ocr-address [final.md]` | Address review feedback with AI agent |
+| `/ocr-address [final.md]` | Address review feedback — corroborate, implement, and commit fixes |
+| `/ocr-address --items blockers` | Address only blocker-severity findings |
+| `/ocr-address --items 1,3,5` | Address specific finding numbers |
+| `/ocr-address --no-commit` | Apply fixes without creating a git commit |
 
 *For Claude Code / Cursor, use `/ocr:review`, `/ocr:map`, etc.*
 
@@ -722,3 +866,4 @@ Apache-2.0
 - **GitHub**: [github.com/sanidhyagupta-web/Hire-Code-Review-Bots](https://github.com/sanidhyagupta-web/Hire-Code-Review-Bots)
 - **npm (CLI)**: [@open-code-review/cli](https://www.npmjs.com/package/@open-code-review/cli)
 - **npm (Agents)**: [@open-code-review/agents](https://www.npmjs.com/package/@open-code-review/agents)
+# Code-Revs
